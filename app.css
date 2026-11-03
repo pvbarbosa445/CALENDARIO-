@@ -367,3 +367,66 @@ b.warn { color: var(--orange); }
 .panel .summary-line { width: 100%; text-align: left; }
 .panel .summary-line b { font-size: 15px; font-weight: 600; }
 .panel .summary-line b.warn { color: var(--orange); }
+
+/* =========================================================
+   Tela larga (PC, notebook, tablet deitado) — a partir de 900px
+   Calendário à esquerda, detalhes do dia fixos à direita,
+   janelas abrindo centralizadas em vez de subir de baixo.
+   ========================================================= */
+@media (min-width: 900px) {
+  :root { --dock: clamp(360px, 30vw, 440px); }
+  body { font-size: 15px; }
+  .topbar, main { margin-right: var(--dock); }
+  .topbar { padding: 14px 28px 4px; }
+  .bar-normal, .bar-select { height: 60px; max-width: 1100px; margin: 0 auto; }
+  .month-title { font-size: 30px; }
+  main { padding: 0 28px 120px; }
+  .weekdays, .grid-wrap, .summary, #panels { max-width: 1100px; margin-left: auto; margin-right: auto; }
+  .weekdays div { font-size: 12px; padding-bottom: 10px; }
+  .cell { height: clamp(84px, calc((100vh - 230px) / 6), 132px); padding: 8px 6px 10px; cursor: pointer; }
+  .cell:hover { background: var(--s1); border-radius: 12px; }
+  .cell .num { font-size: 16px; width: 32px; height: 32px; }
+  .cell .tags { gap: 4px; height: 6px; margin-top: 5px; }
+  .cell .tags i { width: 6px; height: 6px; }
+  .cell .val { font-size: 14px; }
+  .cell .mv { font-size: 11px; }
+  .summary-line { font-size: 15px; }
+  .fab { right: calc(var(--dock) + 32px); bottom: 32px; width: 60px; height: 60px; }
+  .sel-bar { right: var(--dock); padding: 16px 28px 24px; }
+  .sel-bar .primary-btn { max-width: 420px; display: block; margin: 0 auto; }
+  .toast { right: calc(var(--dock) + 12px); }
+
+  /* detalhes do dia: painel fixo */
+  #daySheet.docked {
+    top: 0; bottom: 0; left: auto; right: 0; width: var(--dock); max-height: none; height: 100vh;
+    border-radius: 0; border-left: 1px solid var(--line); transform: none; transition: none; z-index: 4;
+    padding-top: 12px;
+  }
+  #daySheet.docked .grabber { display: none; }
+  #daySheet.docked .sheet-title { font-size: 22px; }
+  .item, .card-row, .scope, .alert-row, .pick { cursor: pointer; }
+  .item:hover, .card-row:hover, .scope:hover, .pick:hover, .alert-row:hover { background: var(--s2); border-radius: 10px; }
+  .icon-btn:hover, .text-btn:hover, .link-btn:hover { filter: brightness(1.25); }
+  .act:hover span.ic { filter: brightness(1.3); }
+
+  /* demais folhas viram janelas centralizadas */
+  .sheet:not(.docked) {
+    left: 50%; right: auto; top: 50%; bottom: auto; width: min(520px, 92vw); max-height: 86vh;
+    border-radius: 20px; padding-bottom: 8px;
+    transform: translate(-50%, -46%) scale(.98); opacity: 0; pointer-events: none;
+    transition: transform .2s var(--ease), opacity .18s;
+  }
+  .sheet:not(.docked).on { transform: translate(-50%, -50%); opacity: 1; pointer-events: auto; }
+  .sheet.tall:not(.docked) { height: 86vh; }
+  #pageSheet { width: min(640px, 92vw) !important; }
+  .sheet:not(.docked) .grabber { display: none; }
+  .sheet:not(.docked) .sheet-head { padding-top: 16px; }
+  .drawer { width: 340px; }
+  .dialog-card { max-width: 380px; }
+}
+
+@media (min-width: 1400px) {
+  :root { --dock: 460px; }
+  .cell .val { font-size: 15px; }
+}
+@media (min-width: 900px) { .toast { top: auto; bottom: 28px; left: 28px; right: calc(var(--dock) + 110px); transform: translateY(12px); } .toast.on { transform: none; } }

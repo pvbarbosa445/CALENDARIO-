@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -162,6 +162,25 @@ window.addEventListener('popstate', () => {
 function updateScrim() { $('#scrim').classList.toggle('on', layers.some(l => l.el.id !== 'dialog')); }
 const isOpen = el => layers.some(l => l.el === el);
 
+// ---------- Tela larga (PC/tablet): detalhes do dia ficam fixos à direita ----------
+const wideMQ = window.matchMedia('(min-width: 900px)');
+const isWide = () => wideMQ.matches;
+const dayVisible = () => isWide() || isOpen($('#daySheet'));
+function applyLayout() {
+  document.body.classList.toggle('wide', isWide());
+  const ds = $('#daySheet');
+  if (isWide()) {
+    if (isOpen(ds)) { const i = layers.findIndex(l => l.el === ds); if (i >= 0) layers.splice(i, 1); updateScrim(); }
+    ds.classList.add('on', 'docked'); ds.setAttribute('aria-hidden', 'false');
+    if (S.view && S.calc) renderDay(S.selected || today());
+  } else {
+    ds.classList.remove('docked');
+    if (!isOpen(ds)) { ds.classList.remove('on'); ds.setAttribute('aria-hidden', 'true'); }
+  }
+  if (S.calc) renderGrid();
+}
+wideMQ.addEventListener('change', applyLayout);
+
 function toast(msg, undo, label = 'Desfazer') {
   $('#toastMsg').textContent = msg;
   $('#toastUndo').hidden = !undo;
@@ -254,7 +273,7 @@ function renderGrid(anim) {
     if (w === 0 || w === 6) cls += ' wkend';
     if (S.isHoliday(date)) cls += ' hol';
     if (date === t) cls += ' today';
-    if (S.selecting ? S.picked.has(date) : date === S.selected && isOpen($('#daySheet'))) cls += S.selecting ? ' picked' : ' sel';
+    if (S.selecting ? S.picked.has(date) : date === S.selected && dayVisible()) cls += S.selecting ? ' picked' : ' sel';
     const n = +date.slice(8);
     if (!inMonth) { html += `<button class="${cls}" data-date="${date}"><span class="num">${n}</span></button>`; continue; }
     const day = month.days[n - 1];
@@ -323,7 +342,7 @@ function goToday() {
 function refresh() {
   rebuild();
   renderGrid();
-  if (isOpen($('#daySheet')) && S.selected) renderDay(S.selected);
+  if (dayVisible() && S.selected) renderDay(S.selected);
   if (isOpen($('#groupSheet'))) renderGroup();
   renderTagList();
   refreshDerived();
@@ -457,7 +476,7 @@ function openDay(date) {
   S.selected = date;
   if (S.checking && S.checking !== date) S.checking = null;
   renderDay(date);
-  if (!isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; renderGrid(); });
+  if (!isWide() && !isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; renderGrid(); });
   renderGrid();
 }
 
@@ -1206,7 +1225,29 @@ function bind() {
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; goMonth(dx < 0 ? 1 : -1); }
   }, { passive: true });
-  $('#grid').addEventListener('contextmenu', e => e.preventDefault());
+  $('#grid').addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const c = e.target.closest('.cell:not(.out)');
+    if (c && !S.selecting && !('ontouchstart' in window && navigator.maxTouchPoints > 0)) enterSelect(c.dataset.date);
+  });
+  // PC: clicar e arrastar com o mouse seleciona vários dias no modo de seleção
+  let mdrag = null;
+  $('#grid').addEventListener('mousedown', e => {
+    const c = e.target.closest('.cell:not(.out)');
+    if (!S.selecting || !c || e.button !== 0) return;
+    mdrag = { on: !S.picked.has(c.dataset.date), last: c.dataset.date, moved: false };
+  });
+  $('#grid').addEventListener('mouseover', e => {
+    if (!mdrag) return;
+    const c = e.target.closest('.cell:not(.out)');
+    if (!c || c.dataset.date === mdrag.last) return;
+    if (!mdrag.moved) { togglePick(mdrag.last, mdrag.on); mdrag.moved = true; }
+    mdrag.last = c.dataset.date; togglePick(mdrag.last, mdrag.on);
+  });
+  window.addEventListener('mouseup', () => {
+    if (mdrag && mdrag.moved) { swiped = true; setTimeout(() => { swiped = false; }, 0); }
+    mdrag = null;
+  });
   $('#grid').addEventListener('click', e => {
     if (swiped) { swiped = false; return; }
     const c = e.target.closest('.cell'); if (!c) return;
@@ -1249,7 +1290,7 @@ function bind() {
 
   // Dia
   $('#btnDayAdd').onclick = () => openForm({ date: S.selected, paid: S.checking ? true : undefined });
-  $('#btnDaySelect').onclick = async () => { const d = S.selected; await closeTop(); enterSelect(d); };
+  $('#btnDaySelect').onclick = async () => { const d = S.selected; if (!isWide()) await closeTop(); enterSelect(d); };
   $('#dayBody').addEventListener('click', e => {
     const row = e.target.closest('.item'); if (!row) return;
     const q = e.target.closest('[data-q]');
@@ -1279,7 +1320,7 @@ function bind() {
     if (k === 'carry' || k === 'holOptional') rebuild();
     if (k === 'mondayFirst') renderHeader();
     renderGrid();
-    if (k === 'showTransfers' && S.selected && isOpen($('#daySheet'))) renderDay(S.selected);
+    if (k === 'showTransfers' && S.selected && dayVisible()) renderDay(S.selected);
   }));
   $('#basisSeg').onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -1443,6 +1484,7 @@ async function init() {
   renderHeader();
   renderGrid();
   bind();
+  applyLayout();
   refreshDerived();
   db.requestPersistence();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
