@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.8.2';
+export const APP_VERSION = '1.9.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -138,7 +138,9 @@ function chipColor(c) {
   h = (h * 60 + 360) % 360;
   const l0 = (mx + mn) / 2, s0 = d ? d / (1 - Math.abs(2 * l0 - 1)) : 0;
   const S2 = d ? Math.min(0.42, Math.max(0.28, s0)) : 0;               // tom contido como o #3E4B91; cinzas continuam cinzas
-  const L2 = h >= 40 && h <= 75 ? 0.32 : h > 75 && h < 170 ? 0.33 : 0.39; // amarelos e verdes um pouco mais escuros
+  const base = h >= 40 && h <= 75 ? 0.32 : h > 75 && h < 170 ? 0.33 : 0.39; // amarelos e verdes um pouco mais escuros
+  // tags da mesma meta (tons da cor da meta) continuam um pouco diferentes entre si
+  const L2 = Math.min(0.48, Math.max(0.24, base + (l0 - 0.5) * 0.3));
   const k = (1 - Math.abs(2 * L2 - 1)) * S2, x = k * (1 - Math.abs(((h / 60) % 2) - 1)), m = L2 - k / 2;
   const [R, G, B] = h < 60 ? [k, x, 0] : h < 120 ? [x, k, 0] : h < 180 ? [0, k, x] : h < 240 ? [0, x, k] : h < 300 ? [x, 0, k] : [k, 0, x];
   return '#' + [R, G, B].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -601,6 +603,8 @@ function itemTitle(it) {
   if (t) return t.name;
   if (it.kind === 'reserve') return 'Guardado';
   if (it.kind === 'release') return 'Retirado';
+  const m = it.metaId && S.metas.get(it.metaId);
+  if (m) return m.name;
   return KIND_NAME[it.kind];
 }
 /**
@@ -626,8 +630,18 @@ function passesFilters(it) {
 function itemColor(it) {
   if (it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release') return 'var(--accent)';
   const t = tag(it.tagId);
-  return t ? tagColor(t) : it.kind === 'income' ? 'var(--green)' : 'var(--red)';
+  if (t) return tagColor(t);
+  const m = it.metaId && S.metas.get(it.metaId);
+  return m ? m.color || '#8cb6e4' : it.kind === 'income' ? 'var(--green)' : 'var(--red)';
 }
+/** Meta de uma tag (cada tag pertence a uma meta só). */
+function metaOfTag(tagId) {
+  if (!tagId) return null;
+  for (const m of S.metas.values()) if (!m.archived && (m.tagIds || []).includes(tagId)) return m;
+  return null;
+}
+/** Meta de um lançamento: a meta da tag ou, sem tag, a meta escolhida diretamente. */
+const itemMeta = it => metaOfTag(it.tagId) || (it.metaId && S.metas.get(it.metaId)) || null;
 const isInternal = it => it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release';
 function itemSign(it) {
   if (it.kind === 'income') return '+';
@@ -994,12 +1008,36 @@ function scopeSub(scope, ctx) {
 const Fm = { mode: 'new', item: null, entry: null, kind: 'expense', weekdays: new Set(), dates: [], ruleOpen: false, splits: [] };
 const POLICY_RULES = new Set(['once', 'daily', 'weekly', 'monthlyDay', 'interval', 'dates']);
 
+/**
+ * Campo "Meta e tag" (como no app antigo, em versão enxuta): as tags aparecem agrupadas pela meta a que pertencem;
+ * dá para lançar só na meta ("geral") ou numa tag dela. Só as metas e tags da conta exibida.
+ */
 function fillTagSelect(selected) {
-  // só as tags da conta exibida (e a tag atual do lançamento, se for outra)
-  const opts = tagsSorted().filter(t => (t.kind === 'both' || t.kind === Fm.kind) && (t.id === selected || tagInWorld(t)));
-  $('#fTag').innerHTML = `<option value="">Nenhuma</option>${opts.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}<option value="__new">Nova tag…</option>`;
-  $('#fTag').value = opts.some(t => t.id === selected) ? selected : '';
+  const kindOk = k => (k || 'expense') === 'both' || (k || 'expense') === Fm.kind;
+  const metas = [...S.metas.values()].filter(m => !m.archived && kindOk(m.kind) && (metaVisible(m) || `meta:${m.id}` === selected))
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name, 'pt-BR'));
+  const used = new Set();
+  let html = '<option value="">Sem meta</option>';
+  for (const m of metas) {
+    const ts = (m.tagIds || []).map(tag).filter(t => t && kindOk(t.kind) && (t.id === selected || tagInWorld(t)));
+    ts.forEach(t => used.add(t.id));
+    html += `<optgroup label="${esc(m.name)}"><option value="meta:${m.id}">${esc(m.name)} · geral</option>${ts.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</optgroup>`;
+  }
+  const loose = tagsSorted().filter(t => !used.has(t.id) && !metaOfTag(t.id) && kindOk(t.kind) && (t.id === selected || tagInWorld(t)));
+  if (loose.length) html += `<optgroup label="Tags sem meta">${loose.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}</optgroup>`;
+  html += '<option value="__new">Nova tag…</option>';
+  $('#fTag').innerHTML = html;
+  const ok = [...$('#fTag').options].some(o => o.value === selected);
+  $('#fTag').value = ok ? selected : '';
 }
+/** Valor do campo "Meta e tag" → { tagId, metaId } (metaId só quando lançado direto na meta). */
+function readTagField() {
+  const v = $('#fTag').value;
+  if (!v || v === '__new') return { tagId: null, metaId: null };
+  if (v.startsWith('meta:')) return { tagId: null, metaId: v.slice(5) };
+  return { tagId: v, metaId: null };
+}
+const tagFieldValue = it => it ? (it.tagId || (it.metaId ? `meta:${it.metaId}` : '')) : '';
 function setKind(k) {
   Fm.kind = k;
   $$('#kindSeg button').forEach(b => b.classList.toggle('on', b.dataset.kind === k));
@@ -1027,7 +1065,7 @@ function updateSplitUI() {
   const on = can && $('#fSplit').checked;
   $('#fTagRow').hidden = Fm.kind === 'transfer' || on;
   if (!on) { $('#fSplits').innerHTML = ''; return; }
-  if (!Fm.splits.length) Fm.splits = [{ tagId: $('#fTag').value && $('#fTag').value !== '__new' ? $('#fTag').value : '', amount: parseMoney($('#fAmount').value) || 0 }, { tagId: '', amount: 0 }];
+  if (!Fm.splits.length) Fm.splits = [{ tagId: readTagField().tagId || '', amount: parseMoney($('#fAmount').value) || 0 }, { tagId: '', amount: 0 }];
   const tags = tagsSorted().filter(t => t.kind !== 'income');
   const total = parseMoney($('#fAmount').value) || 0;
   const sum = Fm.splits.reduce((a, p) => a + (p.amount || 0), 0);
@@ -1092,7 +1130,7 @@ function openForm({ item = null, date = null, paid, kind, from, to, amount } = {
   $('#fSplit').checked = !!(e && e.splits);
   $('#fRule').value = r.type;
   setKind(e ? e.kind : kind || 'expense');
-  fillTagSelect(item ? item.tagId : '');
+  fillTagSelect(tagFieldValue(item));
   $('#fDate').value = item ? item.date : r.start;
   $('#fPaid').checked = item ? item.status === 'paid' : (paid ?? (r.start <= today()));
   $('#fRule').value = r.type;
@@ -1119,7 +1157,8 @@ async function saveForm(ev) {
   const date = $('#fDate').value;
   if (!date) { toast('Informe a data'); return; }
   const kind = Fm.kind;
-  const tagId = kind !== 'transfer' && $('#fTag').value && $('#fTag').value !== '__new' ? $('#fTag').value : null;
+  const tf = kind !== 'transfer' ? readTagField() : { tagId: null, metaId: null };
+  const tagId = tf.tagId, metaId = tf.metaId;
   const title = $('#fTitle').value.trim();
   const pay = $('#fPaid').checked;
   const accountId = $('#fAccount').value || S.settings.defaultAccount;
@@ -1138,7 +1177,7 @@ async function saveForm(ev) {
 
   if (Fm.mode === 'new') {
     const rule = readRule(date);
-    const entry = { id: uid(), kind, title, amount, tagId: splits ? null : tagId, ...extra, rule, segments: [], createdAt: nowISO(), updatedAt: nowISO() };
+    const entry = { id: uid(), kind, title, amount, tagId: splits ? null : tagId, metaId: splits ? null : metaId, ...extra, rule, segments: [], createdAt: nowISO(), updatedAt: nowISO() };
     if (rule.type === 'once' && pay && !(await guardSpend({ ...entry, tagId: entry.tagId }, amount))) return;
     const sig = x => JSON.stringify([x.kind, x.title, x.amount, x.tagId, x.rule]);
     if ([...S.entries.values()].some(x => sig(x) === sig(entry))) {
@@ -1163,7 +1202,7 @@ async function saveForm(ev) {
   const it = Fm.item, e = Fm.entry;
   if (e.rule.type === 'once') {
     // lançamento avulso: altera direto
-    const ne = { ...e, kind, title, amount, tagId: splits ? null : tagId, ...extra, rule: { ...readRule(date), type: 'once', start: date }, updatedAt: nowISO() };
+    const ne = { ...e, kind, title, amount, tagId: splits ? null : tagId, metaId: splits ? null : metaId, ...extra, rule: { ...readRule(date), type: 'once', start: date }, updatedAt: nowISO() };
     if (pay && !(it.status === 'paid') && !(await guardSpend({ ...ne, splits }, amount))) return;
     const ch = ops.newChanges();
     let rule = readRule(date);
@@ -1186,6 +1225,7 @@ async function saveForm(ev) {
   if (amount !== it.amount) patch.amount = amount;
   if (title !== (it.title || '')) patch.title = title;
   if (tagId !== (it.tagId || null)) patch.tagId = tagId;
+  if (metaId !== (it.metaId || null)) patch.metaId = metaId;
   const dateChanged = date !== it.date;
   const payChanged = pay !== (it.status === 'paid');
   const ctx = { entry: e, item: it, today: today(), data: S.data, mondayFirst: S.settings.mondayFirst };
@@ -1197,7 +1237,7 @@ async function saveForm(ev) {
     });
     if (!sc) return;
     const from = sc === 'future' ? it.orig : ops.allFrom(e, today());
-    const fields = { kind: e.kind, title: title || e.title, amount, tagId, accountId, toAccountId, origin, rule: newRule };
+    const fields = { kind: e.kind, title: title || e.title, amount, tagId, metaId, accountId, toAccountId, origin, rule: newRule };
     await closeTop();
     return commit('Recorrência alterada', ops.planRuleChange({ entry: e, fields, from, data: S.data, uid }));
   }
@@ -1225,7 +1265,9 @@ function describePatch(p, it) {
   const out = [];
   if ('amount' in p) out.push(`${money(it.amount)} → ${money(p.amount)}`);
   if ('title' in p) out.push(`“${p.title || 'sem descrição'}”`);
-  if ('tagId' in p) out.push(`tag ${p.tagId ? tag(p.tagId).name : 'removida'}`);
+  if ('tagId' in p && p.tagId) out.push(`tag ${tag(p.tagId).name}`);
+  else if ('metaId' in p && p.metaId) out.push(`meta ${(S.metas.get(p.metaId) || {}).name || ''}`);
+  else if ('tagId' in p || 'metaId' in p) out.push('sem meta');
   return out.join(' · ');
 }
 
@@ -1376,14 +1418,17 @@ async function groupAction(act) {
 // ---------- Tags ----------
 const PALETTE = ['#ff5f57', '#ff9f0a', '#ffd60a', '#45cf7f', '#63e6e2', '#40c8e0', '#8cb6e4', '#5e5ce6', '#bf5af2', '#ff375f', '#ac8e68', '#8e8e93'];
 
-async function tagDialog(t = null, kindHint = 'expense') {
+async function tagDialog(t = null, kindHint = 'expense', metaHint = null) {
   let color = t ? t.color : PALETTE[(S.tags.size * 5) % PALETTE.length];
+  const curMeta = t ? (metaOfTag(t.id) || {}).id || '' : metaHint || '';
+  const metaOpts = [...S.metas.values()].filter(m => !m.archived && (metaVisible(m) || m.id === curMeta)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   const actions = [{ label: 'Cancelar', value: null }];
   if (t) actions.push({ label: 'Excluir', value: 'delete', cls: 'danger' });
-  actions.push({ label: 'Salvar', cls: 'primary', validate: () => !!$('#tgName').value.trim() || (toast('Dê um nome à tag'), false), value: () => ({ name: $('#tgName').value.trim(), kind: $('#tgKind').value, color }) });
+  actions.push({ label: 'Salvar', cls: 'primary', validate: () => !!$('#tgName').value.trim() || (toast('Dê um nome à tag'), false), value: () => ({ name: $('#tgName').value.trim(), kind: $('#tgKind').value, color, metaId: $('#tgMeta').value }) });
   const res = await dialog({
     title: t ? 'Editar tag' : 'Nova tag',
     html: `<input type="text" id="tgName" placeholder="Nome" maxlength="30" value="${esc(t ? t.name : '')}">
+      <select id="tgMeta" aria-label="Meta"><option value="">Sem meta</option>${metaOpts.map(m => `<option value="${m.id}" ${m.id === curMeta ? 'selected' : ''}>Meta: ${esc(m.name)}</option>`).join('')}</select>
       <select id="tgKind"><option value="expense">Despesa</option><option value="income">Receita</option><option value="both">Receita e despesa</option></select>
       <div class="swatches" id="tgColors">${PALETTE.map(c => `<button type="button" style="background:${c}" data-c="${c}" class="${c === color ? 'on' : ''}"></button>`).join('')}</div>`,
     actions,
@@ -1409,8 +1454,16 @@ async function tagDialog(t = null, kindHint = 'expense') {
     if (ops.changeCount(ch)) await commit('Tag excluída', ch, { silent: true }); else refresh();
     return null;
   }
-  const nt = t ? { ...t, ...res } : { id: uid(), ...res, order: S.tags.size };
+  const { metaId: newMeta, ...fields } = res;
+  const nt = t ? { ...t, ...fields } : { id: uid(), ...fields, order: S.tags.size };
   await db.put('tags', nt);
+  // cada tag pertence a uma meta só: sai das outras e entra na escolhida
+  for (const m of S.metas.values()) {
+    const has = (m.tagIds || []).includes(nt.id), want = m.id === newMeta;
+    if (has === want) continue;
+    const nm = { ...m, tagIds: want ? [...(m.tagIds || []), nt.id] : m.tagIds.filter(x => x !== nt.id), onlyAssigned: true };
+    await db.put('metas', nm); S.metas.set(nm.id, nm);
+  }
   db.log(t ? `Tag alterada: ${nt.name}` : `Tag criada: ${nt.name}`, { before: t || null, after: nt });
   S.tags.set(nt.id, nt);
   refresh();
@@ -1420,12 +1473,18 @@ async function tagDialog(t = null, kindHint = 'expense') {
 function renderTagList() {
   const hidden = new Set(S.settings.hiddenTags);
   const list = tagsSorted();
-  $('#tagList').innerHTML = list.length ? list.map(t => `
+  const row = t => `
     <div class="row tag-row${hidden.has(t.id) ? ' off' : ''}">
-      <span class="dot" style="background:${t.color}"></span>
+      <span class="dot" style="background:${tagColor(t)}"></span>
       <button class="tag-name" data-edit-tag="${t.id}">${esc(t.name)}</button>
       <input type="checkbox" class="switch" data-tag="${t.id}" ${hidden.has(t.id) ? '' : 'checked'} aria-label="Exibir ${esc(t.name)}">
-    </div>`).join('') : '<div class="row"><span class="muted">Nenhuma tag</span></div>';
+    </div>`;
+  // agrupadas pela meta a que pertencem (a meta é a categoria; as tags ficam dentro dela)
+  const groups = new Map();
+  for (const t of list) { const m = metaOfTag(t.id); const k = m ? m.id : ''; if (!groups.has(k)) groups.set(k, { m, tags: [] }); groups.get(k).tags.push(t); }
+  const ordered = [...groups.values()].sort((a, b) => !a.m ? 1 : !b.m ? -1 : a.m.name.localeCompare(b.m.name, 'pt-BR'));
+  $('#tagList').innerHTML = list.length ? ordered.map(g => `<div class="row tag-meta"><span class="dot" style="background:${g.m ? g.m.color : 'transparent'}"></span><span>${g.m ? esc(g.m.name) : 'Sem meta'}</span></div>${g.tags.map(row).join('')}`).join('')
+    : '<div class="row"><span class="muted">Nenhuma tag</span></div>';
 }
 
 // ---------- Menu lateral ----------
@@ -1779,10 +1838,12 @@ function bind() {
   $('#fDateAdd').addEventListener('change', e => { if (e.target.value && !Fm.dates.includes(e.target.value)) { Fm.dates.push(e.target.value); Fm.dates.sort(); } e.target.value = ''; updateRuleUI(); });
   $('#fDates').onclick = e => { const b = e.target.closest('[data-d]'); if (b) { Fm.dates = Fm.dates.filter(d => d !== b.dataset.d); updateRuleUI(); } };
   $('#fTag').addEventListener('change', async e => {
-    if (e.target.value !== '__new') return;
+    if (e.target.value !== '__new') { Fm.lastTagVal = e.target.value; return; }
+    const prev = Fm.lastTagVal || '';
+    const pm = prev.startsWith('meta:') ? prev.slice(5) : (metaOfTag(prev) || {}).id;
     e.target.value = '';
-    const t = await tagDialog(null, Fm.kind);
-    fillTagSelect(t ? t.id : '');
+    const t = await tagDialog(null, Fm.kind, pm || null);
+    fillTagSelect(t ? t.id : prev);
   });
   $('#btnDelete').onclick = deleteFlow;
   $('#fSplit').addEventListener('change', () => { Fm.splits = []; updateSplitUI(); });

@@ -656,7 +656,8 @@ function metasView() {
   return {
     title: 'Metas e orçamentos', right: { icon: 'plus', fn: () => push(metaForm()) },
     body: () => {
-      const list = [...S().metas.values()].filter(C.metaVisible);
+      // gastos primeiro, depois receitas, na ordem das metas
+      const list = [...S().metas.values()].filter(C.metaVisible).sort((a, b) => ((a.kind === 'income') - (b.kind === 'income')) || ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
       const bctx = C.budgetCtx();
       const hiddenN = [...S().metas.values()].filter(m => !m.archived && !C.metaVisible(m)).length;
       return list.map(m => metaCard(m, C.F.metaProgress(C.scopedMeta(m), C.today(), bctx))).join('')
@@ -672,7 +673,7 @@ function metaCard(m, p) {
   if (!p.limit) {
     return `<button class="card-row col" data-a="open" data-id="${m.id}">
       <span class="line"><span class="dot" style="background:${m.color}"></span><span class="grow t">${esc(m.name)}</span><span class="v">${money(p.real)}</span></span>
-      <span class="s">${inc ? 'recebido' : 'pago'} · previsto ${money(p.planned)} · sem limite definido</span>
+      <span class="s">${inc ? 'recebido' : 'pago'} · previsto ${money(p.planned)} · sem limite definido</span>${metaTags(m)}
     </button>`;
   }
   const label = `${money(p.real)} de ${money(p.limit)}`;
@@ -681,8 +682,13 @@ function metaCard(m, p) {
   return `<button class="card-row col" data-a="open" data-id="${m.id}">
     <span class="line"><span class="dot" style="background:${m.color}"></span><span class="grow t">${esc(m.name)}</span><span class="v">${Math.round(p.pct * 100)}%</span></span>
     ${progress(p.pct, m.color, !inc && p.over > 0)}
-    <span class="s">${label} · ${sub} · ${C.F.PERIODS[m.period].toLowerCase()}</span>
+    <span class="s">${label} · ${sub} · ${C.F.PERIODS[m.period].toLowerCase()}</span>${metaTags(m)}
   </button>`;
+}
+/** Tags que ficam dentro da meta (ex.: Assinaturas → Internet · Spotify · Gemini). */
+function metaTags(m) {
+  const names = (m.tagIds || []).map(id => S().tags.get(id)).filter(Boolean).map(t => C.esc(t.name));
+  return names.length ? `<span class="s meta-tags">Tags: ${names.join(' · ')}</span>` : '';
 }
 
 function metaDetail(id) {
@@ -754,7 +760,7 @@ function newMetaAccounts() {
 }
 function metaForm(m = null) {
   const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', ') }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
+    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
@@ -769,7 +775,8 @@ function metaForm(m = null) {
       { k: 'color', label: 'Cor', type: 'color' },
       { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch' },
       { section: 'O que entra na meta' },
-      { k: 'tagIds', label: 'Tags (nenhuma = todas)', type: 'multi', options: () => tagOptions(null)() },
+      { k: 'tagIds', label: 'Tags desta meta (cada tag fica em uma meta só)', type: 'multi', options: () => tagOptions(null)() },
+      { hint: 'Os lançamentos entram na meta pela tag ou quando são lançados direto na meta, sem tag.' },
       { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: marque só a Conta iFood para uma meta da bike', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
       { k: 'originsTxt', label: 'Origens', placeholder: 'Ex.: iFood, Salário CLT', show: v => v.kind === 'income' },
       { section: 'Sobras e excedentes', show: v => daily(v) && v.kind !== 'income' },
@@ -786,7 +793,12 @@ function metaForm(m = null) {
     ],
     onSave: async v => {
       const { originsTxt, ...rest } = v;
-      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
+      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, onlyAssigned: true, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
+      // cada tag pertence a uma meta só: as tags marcadas aqui saem das outras metas
+      for (const o of S().metas.values()) {
+        if (o.id === obj.id || !(o.tagIds || []).some(id => obj.tagIds.includes(id))) continue;
+        await saveStore('metas', 'metas', { ...o, tagIds: o.tagIds.filter(id => !obj.tagIds.includes(id)) });
+      }
       if (!daily(obj) || obj.kind === 'income' || !obj.amount) obj.showOnCalendar = false;
       if (obj.showOnCalendar) for (const o of S().metas.values()) if (o.id !== obj.id && o.showOnCalendar) await saveStore('metas', 'metas', { ...o, showOnCalendar: false });
       await saveStore('metas', 'metas', obj);

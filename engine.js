@@ -134,12 +134,13 @@ export const occKey = (entryId, orig) => `${entryId}|${orig}`;
  * vigência ("a partir de"), preservando o passado: [{ from, amount?, title?, tagId? }]
  */
 export function attrsAt(e, orig) {
-  const a = { amount: e.amount, title: e.title, tagId: e.tagId ?? null };
+  const a = { amount: e.amount, title: e.title, tagId: e.tagId ?? null, metaId: e.metaId ?? null };
   for (const s of e.segments || []) {
     if (s.from > orig) break;
     if (s.amount != null) a.amount = s.amount;
     if (s.title != null) a.title = s.title;
     if ('tagId' in s) a.tagId = s.tagId;
+    if ('metaId' in s) a.metaId = s.metaId;
   }
   return a;
 }
@@ -166,6 +167,7 @@ export function itemsInRange(from, to, data) {
       paidAmount: ov && ov.paidAmount, distPending: !!(ov && ov.distPending),
       title: ov && ov.title != null ? ov.title : a.title,
       tagId: ov && 'tagId' in ov ? ov.tagId : a.tagId,
+      metaId: ov && 'metaId' in ov ? ov.metaId : a.metaId, // lançamento classificado só na meta (sem tag)
       amount: ov && ov.amount != null ? ov.amount : a.amount,
       plannedAmount: a.amount,
       status: ov && ov.status ? ov.status : 'planned',

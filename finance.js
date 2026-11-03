@@ -91,7 +91,15 @@ export function metaShare(it, meta) {
   if (meta.accountIds && meta.accountIds.length && !meta.accountIds.includes(it.accountId)) return null;
   if (kind === 'income' && meta.origins && meta.origins.length && !meta.origins.includes(it.origin)) return null;
   let share = 1;
-  if (meta.tagIds && meta.tagIds.length) {
+  // Metas e tags (como no app antigo): a meta é a categoria e as tags ficam dentro dela.
+  // Um lançamento entra na meta pela tag (que pertence à meta) ou por ter sido lançado direto na meta, sem tag.
+  const tagged = !!(meta.tagIds && meta.tagIds.length);
+  const legacyAll = !tagged && !meta.onlyAssigned; // metas antigas sem tags = "todas"
+  if (it.metaId && !legacyAll) {
+    if (it.metaId !== meta.id) return null;
+  } else if (!tagged && meta.onlyAssigned) {
+    return null;
+  } else if (tagged) {
     if (it.splits && it.splits.length) {
       const total = it.splits.reduce((s, p) => s + p.amount, 0) || 1;
       const part = it.splits.filter(p => meta.tagIds.includes(p.tagId)).reduce((s, p) => s + p.amount, 0);

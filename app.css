@@ -796,3 +796,8 @@ html, body, .topbar { background: var(--bg); }
 .cell.sel:not(.hol), .cell.sel { background: var(--cell); }
 .cell.sel.wkend { background: var(--wkend-cell); }
 @media (min-width: 1100px) { .cell.wkend:not(.out):hover { background: #161616; } }
+/* tags agrupadas pela meta (Configurações › Tags) e tags no cartão da meta */
+#tagList .row.tag-meta { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .4px; min-height: 0; padding-top: 12px; padding-bottom: 4px; }
+#tagList .row.tag-meta .dot { width: 8px; height: 8px; }
+#tagList .row.tag-row { padding-left: 26px; }
+.card-row .meta-tags { color: var(--text-3); }
