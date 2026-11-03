@@ -560,3 +560,51 @@ body.cal-exp .summary-line { padding-right: 78px; }
 .nav .row > .ic { flex: none; }
 .nav .row > span:not(.ic) { text-align: left; }
 .nav .row { justify-content: flex-start; }
+
+/* =================== v1.4 — PC em formato de agenda de mesa =================== */
+@media (min-width: 900px) {
+  :root {
+    --deskW: min(1280px, calc(100vw - 48px));          /* largura total do conteúdo, centralizado */
+    --off: calc((100vw - var(--deskW)) / 2);            /* margem lateral */
+    --dock: clamp(300px, 26vw, 360px);                  /* painel do dia */
+    --gap: 24px;
+    --calW: calc(var(--deskW) - var(--dock) - var(--gap));
+  }
+  .topbar, main, body.day-open .topbar, body.day-open main {
+    margin-left: var(--off); margin-right: 0; width: var(--calW); transition: none;
+  }
+  .topbar { padding: 14px 0 4px; }
+  main { padding: 0 0 28px; }
+  .month-title { font-size: 26px; }
+  .grid { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .cell:nth-child(7n) { border-right: 0; }
+  .grid .cell:nth-last-child(-n+7) { border-bottom: 0; }
+  .cell { padding: 6px 8px 8px; }
+  .cell .ln { font-size: 12px; height: 17px; }
+  .cell .val { font-size: 13px; }
+
+  /* painel do dia: cartão fixo à direita, sempre visível */
+  #daySheet.docked, #daySheet.docked.on {
+    top: 16px; bottom: 16px; right: var(--off); left: auto; width: var(--dock); height: auto; max-height: none;
+    border: 1px solid var(--line); border-radius: 18px; transform: none; padding-top: 6px;
+    background: var(--s1); z-index: 4;
+  }
+  #btnDayClose { display: none; }
+  #daySheet.docked .sheet-title { font-size: 19px; }
+
+  .fab, body.day-open .fab { right: calc(var(--off) + var(--dock) + var(--gap) + 16px); bottom: 24px; }
+  .toast, body.day-open .toast { left: var(--off); right: auto; width: min(420px, var(--calW)); bottom: 24px; }
+  .sel-bar, body.day-open .sel-bar { left: var(--off); right: auto; width: var(--calW); padding: 12px 0 20px; }
+  .summary-line { padding-right: 84px; }
+}
+.new-btn { display: none; }
+@media (min-width: 900px) {
+  .fab { display: none; }
+  .new-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px; margin-right: 10px; border-radius: 18px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; }
+  .new-btn svg { width: 18px; height: 18px; stroke-width: 2.4; }
+  .new-btn:hover { filter: brightness(1.08); }
+  /* o cartão do dia acompanha o conteúdo, sem esticar até o fim da tela */
+  #daySheet.docked, #daySheet.docked.on { top: 74px; bottom: auto; max-height: calc(100vh - 96px); }
+  .summary-line { padding-right: 4px; }
+}
+@media (min-width: 900px) { body.cal-exp .summary-line, .summary-line { padding-right: 4px; } }

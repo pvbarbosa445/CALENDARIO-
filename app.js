@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.3.2';
+export const APP_VERSION = '1.4.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -187,7 +187,7 @@ function applyLayout() {
   if (isWide()) {
     if (isOpen(ds)) { const i = layers.findIndex(l => l.el === ds); if (i >= 0) layers.splice(i, 1); updateScrim(); S.dayOpen = true; }
     ds.classList.add('docked');
-    setDock(!!S.dayOpen);
+    setDock(true); // no PC o painel do dia fica sempre ao lado do calendário
   } else {
     ds.classList.remove('docked');
     document.body.classList.remove('day-open');
@@ -216,7 +216,7 @@ function measureCal() {
   const reserve = isWide() ? 64 : 92; // alça + linha de saldo + respiro
   const fill = Math.floor((vh - top - reserve) / CAL.rows);
   CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
-  CAL.expanded = Math.max(CAL.compact + 24, fill);
+  CAL.expanded = Math.max(CAL.compact + 24, isWide() ? Math.min(fill, 150) : fill); // PC: dias com altura máxima confortável
   // quantas linhas de lançamento cabem no dia expandido (o conteúdo é montado uma vez só)
   const lineH = isWide() ? 18 : 15;
   CAL.lines = Math.max(1, Math.floor((CAL.expanded - (isWide() ? 64 : 50)) / lineH));
@@ -1327,6 +1327,7 @@ function bind() {
   $('#btnToday').onclick = goToday;
   $('#scrim').onclick = () => closeTop();
   $$('[data-close]').forEach(b => { b.onclick = () => closeTop(); });
+  $('#btnNewTop').onclick = () => openForm({ date: S.selected || today() });
   $('#fab').onclick = () => openForm({ date: today() });
   $('#summary').onclick = () => { S.settings.summaryOpen = !S.settings.summaryOpen; saveSettings(); renderSummary(); };
 
@@ -1466,8 +1467,7 @@ function bind() {
   $('#groupActions').onclick = e => { const b = e.target.closest('[data-act]'); if (b && !b.disabled) groupAction(b.dataset.act); };
 
   // Dia
-  $('#btnDayClose').onclick = () => { if (isWide()) { setDock(false); renderGrid(); } else closeTop(); };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && isWide() && S.dayOpen && !layers.length) { setDock(false); renderGrid(); } });
+  $('#btnDayClose').onclick = () => { if (!isWide()) closeTop(); };
   $('#btnDayAdd').onclick = () => openForm({ date: S.selected, paid: S.checking ? true : undefined });
   $('#btnDaySelect').onclick = async () => { const d = S.selected; if (!isWide()) await closeTop(); enterSelect(d); };
   $('#dayBody').addEventListener('click', e => {
