@@ -163,7 +163,7 @@ export function itemsInRange(from, to, data) {
       key, entryId: e.id, kind: e.kind,
       accountId: e.accountId || data.defaultAccount || null, toAccountId: e.toAccountId || null,
       piggyId: e.piggyId || null, origin: e.origin || '', splits: e.splits || null, distOf: e.distOf || null,
-      paidAmount: ov && ov.paidAmount,
+      paidAmount: ov && ov.paidAmount, distPending: !!(ov && ov.distPending),
       title: ov && ov.title != null ? ov.title : a.title,
       tagId: ov && 'tagId' in ov ? ov.tagId : a.tagId,
       amount: ov && ov.amount != null ? ov.amount : a.amount,

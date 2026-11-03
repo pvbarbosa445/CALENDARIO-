@@ -1,20 +1,20 @@
 /* Calendário Financeiro — visual minimalista escuro */
 :root {
-  /* Identidade: preto profundo, grafite/carvão e azul-claro. Verde = só dinheiro positivo. */
-  --bg: #000;
-  --s1: #121315;          /* carvão */
-  --s2: #1c1d21;          /* grafite */
-  --s3: #2b2d32;          /* grafite claro */
-  --line: rgba(255, 255, 255, .09);
-  --text: #f3f4f6;
-  --text-2: #c4c7ce;      /* secundário: legível sobre preto */
-  --text-3: #9a9ea8;      /* terciário: ainda legível */
-  --green: #45cf7f;       /* receitas, saldos positivos, economia */
-  --red: #ff5f57;         /* despesas, negativos */
-  --accent: #8cb6e4;      /* azul-claro da marca */
-  --accent-ink: #0a1624;  /* texto sobre o azul */
-  --accent-soft: rgba(140, 182, 228, .16);
-  --orange: #f2b55c;      /* só avisos/pendências */
+  /* Identidade v1.6: fundo grafite profundo, dias em grafite, azul-claro da marca. Verde/vermelho = dinheiro. */
+  --bg: #17191C;          /* fundo */
+  --s1: #1E2227;          /* superfícies secundárias (painéis, menus) */
+  --s2: #25292E;          /* quadrados do calendário e grupos */
+  --s3: #30353B;          /* realce / controles */
+  --line: #363C43;        /* divisórias */
+  --text: #E8EBEF;
+  --text-2: #AAB2BD;
+  --text-3: #8C949F;
+  --green: #55C98B;       /* receitas, economia, positivo */
+  --red: #E47777;         /* despesas, negativo */
+  --accent: #A9D4F5;      /* azul-claro da marca */
+  --accent-ink: #0E1B26;
+  --accent-soft: rgba(169, 212, 245, .16);
+  --orange: #E9B872;      /* só pendências/avisos */
   --r: 14px;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --top: env(safe-area-inset-top, 0px);
@@ -376,7 +376,7 @@ b.warn { color: var(--orange); }
    Calendário à esquerda, detalhes do dia fixos à direita,
    janelas abrindo centralizadas em vez de subir de baixo.
    ========================================================= */
-@media (min-width: 900px) {
+@media (min-width: 1100px) {
   :root { --dock: clamp(360px, 30vw, 440px); }
   body { font-size: 15px; }
   .topbar, main { margin-right: var(--dock); }
@@ -432,7 +432,7 @@ b.warn { color: var(--orange); }
   :root { --dock: 460px; }
   .cell .val { font-size: 15px; }
 }
-@media (min-width: 900px) { .toast { top: auto; bottom: 28px; left: 28px; right: calc(var(--dock) + 110px); transform: translateY(12px); } .toast.on { transform: none; } }
+@media (min-width: 1100px) { .toast { top: auto; bottom: 28px; left: 28px; right: calc(var(--dock) + 110px); transform: translateY(12px); } .toast.on { transform: none; } }
 
 
 /* =================== Identidade v1.2 =================== */
@@ -513,7 +513,7 @@ body.cal-exp .cell .lns { display: flex; }
 @media (max-height: 520px) { .cell { height: var(--cell-h, 46px); } }
 
 /* ----- PC: calendário ocupa toda a área útil; painel do dia só quando aberto ----- */
-@media (min-width: 900px) {
+@media (min-width: 1100px) {
   .topbar, main { margin-right: 0; transition: margin-right .22s var(--ease); }
   body.day-open .topbar, body.day-open main { margin-right: var(--dock); }
   .bar-normal, .bar-select { max-width: none; }
@@ -549,20 +549,20 @@ body.cal-exp .cell .tags { display: none; }
 .cell { min-width: 0; }
 /* o botão + não cobre o valor do saldo */
 body.cal-exp .summary-line { padding-right: 78px; }
-@media (min-width: 900px) { .summary-line { padding-right: 96px; } }
+@media (min-width: 1100px) { .summary-line { padding-right: 96px; } }
 
 /* menu lateral enxuto + engrenagem (como no Samsung Calendar) */
 .drawer-head { padding: 10px 8px 6px 18px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 .drawer-head .gear svg { width: 22px; height: 22px; color: var(--text-2); }
 .settings-body { padding-top: 4px; }
 #settingsSheet { z-index: 42; }
-@media (min-width: 900px) { #settingsSheet { width: min(560px, 92vw) !important; } }
+@media (min-width: 1100px) { #settingsSheet { width: min(560px, 92vw) !important; } }
 .nav .row > .ic { flex: none; }
 .nav .row > span:not(.ic) { text-align: left; }
 .nav .row { justify-content: flex-start; }
 
 /* =================== v1.4 — PC em formato de agenda de mesa =================== */
-@media (min-width: 900px) {
+@media (min-width: 1100px) {
   :root {
     --deskW: min(1280px, calc(100vw - 48px));          /* largura total do conteúdo, centralizado */
     --off: calc((100vw - var(--deskW)) / 2);            /* margem lateral */
@@ -598,7 +598,7 @@ body.cal-exp .summary-line { padding-right: 78px; }
   .summary-line { padding-right: 84px; }
 }
 .new-btn { display: none; }
-@media (min-width: 900px) {
+@media (min-width: 1100px) {
   .fab { display: none; }
   .new-btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px; margin-right: 10px; border-radius: 18px; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 14px; }
   .new-btn svg { width: 18px; height: 18px; stroke-width: 2.4; }
@@ -607,4 +607,43 @@ body.cal-exp .summary-line { padding-right: 78px; }
   #daySheet.docked, #daySheet.docked.on { top: 74px; bottom: auto; max-height: calc(100vh - 96px); }
   .summary-line { padding-right: 4px; }
 }
-@media (min-width: 900px) { body.cal-exp .summary-line, .summary-line { padding-right: 4px; } }
+@media (min-width: 1100px) { body.cal-exp .summary-line, .summary-line { padding-right: 4px; } }
+.segmented.basis-top { margin-top: 16px; }
+#accLabel { display: block; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0; margin-top: -2px; }
+#accLabel:empty { display: none; }
+
+
+/* =================== v1.6 — quadrados grafite =================== */
+.grid { gap: 2px; border: 0 !important; background: transparent; border-radius: 0; }
+.cell, .cell:nth-child(7n) { background: var(--s2); border: 0 !important; border-radius: 6px !important; }
+.cell.out { background: #1C1F23; }
+.cell.out .num { color: #5A616A; }
+.cell:active { background: var(--s3); }
+.cell.sel { background: var(--s3); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cell.picked { background: rgba(169, 212, 245, .22); }
+.weekdays div { color: var(--text-2); }
+.topbar { background: var(--bg); }
+.summary-line { border-top-color: var(--line); }
+.sheet, .drawer, #daySheet.docked { background: var(--s1); }
+.group, .segmented, .step { background: var(--s2); }
+.segmented button.on { background: var(--s3); }
+.dialog-card { background: var(--s2); }
+.dialog-body input, .dialog-body select, .dialog-body .chip { background: var(--s3); }
+.toast { background: var(--s3); }
+.item + .item, .card-row, .scope, .pick, .alert-row, .hist, .tagbar, .kv { border-color: var(--line); }
+.cell .bud.s-pending { box-shadow: inset 0 0 0 1.5px var(--orange); background: transparent !important; }
+@media (min-width: 1100px) {
+  .grid { gap: 3px; }
+  .cell { border-radius: 8px !important; }
+}
+
+/* PC: calendário ~75% e painel lateral ~25% */
+@media (min-width: 1100px) {
+  :root {
+    --deskW: min(1680px, calc(100vw - 48px));
+    --dock: clamp(300px, calc(var(--deskW) * .26), 420px);
+  }
+  .day-hint { padding: 28px 6px; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+  .day-hint b { display: block; color: var(--text); font-size: 17px; margin-bottom: 4px; }
+}
+.hist-det { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.45; }

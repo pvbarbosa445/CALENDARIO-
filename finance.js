@@ -105,7 +105,7 @@ function spentByDate(meta, from, to, data) {
   for (const [d, items] of itemsInRange(from, to, data)) {
     let planned = 0, real = 0;
     for (const it of items) { const s = metaShare(it, meta); if (s) { planned += s.planned; real += s.real; } }
-    out.set(d, { planned, real });
+    out.set(d, { planned, real, pending: Math.max(0, planned - real) });
   }
   return out;
 }
@@ -127,23 +127,24 @@ export function dailyBudget(meta, from, to, { data, checks, today, isHoliday, mo
     if (!appliesOn(meta, d, isHoliday)) continue;
     const limit = meta.amount;
     const avail = limit + (roll === 'week' || roll === 'month' ? carry : 0);
-    const sp = spent.get(d) || { planned: 0, real: 0 };
+    const sp = spent.get(d) || { planned: 0, real: 0, pending: 0 };
     const chk = checks.get(d);
-    // Só um dia CONFERIDO pode ser avaliado como economia/no limite. Sem conferência ele continua
-    // pendente — exceto quando o que já foi pago ultrapassa o disponível (excedente confirmado).
+    // Regras: excedente confirmado = vermelho; conferido e sem pendências = verde (economia) ou no limite;
+    // qualquer dia passado com lançamentos pendentes ou sem conferência = pendente (amarelo).
+    // Um gasto previsto ainda não pago NUNCA conta como economia.
     let status, saved = 0;
     const diff = avail - sp.real;
-    if (d <= today && chk) {
-      status = chk.noExpenses && sp.real === 0 ? 'zero' : diff > 0 ? 'saved' : diff === 0 ? 'ok' : 'over';
-      saved = limit - sp.real;
-      if (roll === 'week' || roll === 'month') carry = meta.carryExcess ? diff : Math.max(0, diff);
-    } else if (d <= today && diff < 0) {
+    const resolved = !!chk && sp.pending === 0;
+    if (d <= today && diff < 0) {
       status = 'over';
       saved = limit - sp.real;
-      if ((roll === 'week' || roll === 'month') && meta.carryExcess) carry = diff;
-      else if (roll === 'week' || roll === 'month') carry = 0;
-    } else status = d > today ? 'future' : d === today ? 'open' : 'pending';
-    if (d >= from) out.set(d, { limit, avail, spent: sp.real, planned: sp.planned, status, saved });
+      if (roll === 'week' || roll === 'month') carry = meta.carryExcess ? diff : 0;
+    } else if (d <= today && resolved) {
+      status = chk.noExpenses && sp.real === 0 ? 'zero' : diff > 0 ? 'saved' : 'ok';
+      saved = limit - sp.real;
+      if (roll === 'week' || roll === 'month') carry = Math.max(0, diff);
+    } else status = d > today ? 'future' : d === today && !chk ? 'open' : 'pending';
+    if (d >= from) out.set(d, { limit, avail, spent: sp.real, planned: sp.planned, pending: sp.pending, status, saved });
   }
   return out;
 }
@@ -213,7 +214,8 @@ export function computeAlerts(ctx) {
   const { data, metas, checks, today, isHoliday, mondayFirst, enabled, set, startBalance, lastBackup, hasData } = ctx;
   const on = k => !enabled || enabled[k] !== false;
   const out = [];
-  const past = flat(itemsInRange(addDays(today, -60), addDays(today, -1), data));
+  // atrasos não expiram: olha desde o primeiro lançamento até ontem
+  const past = flat(itemsInRange(firstDate(data.entries, addDays(today, -1)), addDays(today, -1), data));
   if (on('unpaid')) {
     const l = past.filter(i => i.kind === 'expense' && (i.status === 'planned' || i.status === 'pending' || i.status === 'partial') && (!set || set.has(i.accountId)));
     if (l.length) out.push({ type: 'unpaid', level: 'warn', text: `${l.length} ${l.length === 1 ? 'despesa vencida não paga' : 'despesas vencidas não pagas'}`, date: l[0].date, items: l });
@@ -262,7 +264,7 @@ const fmtC = c => 'R$ ' + (c / 100).toFixed(2).replace('.', ',');
 export function projectNegative(data, set, startBalance, today, days) {
   // saldo de hoje (realizado) + tudo que ainda falta acontecer, inclusive atrasados
   let bal = startBalance;
-  const overdue = flat(itemsInRange(addDays(today, -60), addDays(today, -1), data));
+  const overdue = flat(itemsInRange(firstDate(data.entries, addDays(today, -1)), addDays(today, -1), data));
   for (const it of overdue) { const f = flowOf(it, set); if (f) bal += (f.inc - f.incR) - (f.exp - f.expR) + (f.tr - f.trR); }
   const by = itemsInRange(today, addDays(today, days), data);
   for (const d of range(today, addDays(today, days))) {
@@ -284,4 +286,26 @@ export function periodReport(from, to, data, set) {
     }
   }
   return r;
+}
+
+// ---------------------------------------------------------------- desfazer recebimento com segurança
+/**
+ * Antes de desfazer um recebimento, verifica se o dinheiro (inclusive o distribuído) já foi usado.
+ * Simula o estado sem o recebimento e sem a distribuição: se algum cofrinho ou conta ficaria negativo
+ * (e não estava antes), o desfazer simples é bloqueado.
+ * Retorna { ok, problems: [{ kind, id, missing }] }
+ */
+export function undoReceiptCheck(itemKey, { data, accounts, piggies = [], today }) {
+  let upto = today;
+  for (const ov of data.overrides.values()) if ((ov.status === 'paid' || ov.status === 'partial') && (ov.movedTo || ov.orig) > upto) upto = ov.movedTo || ov.orig;
+  const before = balances({ data, accounts, piggies, today: upto, planUpto: upto });
+  const overrides = new Map(data.overrides);
+  const ov = overrides.get(itemKey);
+  if (ov) { const n = { ...ov }; delete n.status; delete n.paidAmount; delete n.paidAt; overrides.set(itemKey, n); }
+  const drop = new Set(data.entries.filter(e => e.distOf === itemKey).map(e => e.id));
+  const after = balances({ data: { ...data, entries: data.entries.filter(e => !drop.has(e.id)), overrides }, accounts, piggies, today: upto, planUpto: upto });
+  const problems = [];
+  for (const [id, p] of after.piggies) { const b = before.piggies.get(id); if (p.saved < 0 && (!b || b.saved >= 0)) problems.push({ kind: 'piggy', id, missing: -p.saved }); }
+  for (const [id, a] of after.accounts) { const b = before.accounts.get(id); const free = a.real - a.reserved, freeB = b ? b.real - b.reserved : 0; if (free < 0 && freeB >= 0) problems.push({ kind: 'account', id, missing: -free }); }
+  return { ok: !problems.length, problems };
 }

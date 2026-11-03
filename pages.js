@@ -149,10 +149,26 @@ function row({ a, id, dot, t, s, v, vs, cls = '' }) {
     <span class="grow"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</span>${v != null ? `<span class="v ${cls}">${v}${vs ? `<small>${vs}</small>` : ''}</span>` : ''}</button>`;
 }
 const STORE_LABEL = { accounts: 'Conta', piggies: 'Cofrinho', metas: 'Meta' };
+const FIELD_LABEL = { name: 'nome', initialBalance: 'saldo inicial', amount: 'limite', goal: 'valor desejado', deadline: 'prazo', type: 'tipo', period: 'período',
+  purpose: 'finalidade', institution: 'instituição', includeInTotal: 'soma no total', archived: 'arquivada', color: 'cor', rollover: 'sobras', carryExcess: 'excedente',
+  showOnCalendar: 'colorir dias', alertPct: 'alerta (%)', tagIds: 'tags', accountIds: 'contas', allowedTags: 'despesas permitidas', rules: 'regras de distribuição', accountId: 'conta', kind: 'tipo' };
+const MONEY_FIELDS = new Set(['initialBalance', 'amount', 'goal']);
+/** Diferenças campo a campo (antes → depois) para o histórico. */
+function diffRecord(before, after) {
+  if (!before) return ['Criado'];
+  const out = [];
+  for (const k of Object.keys(FIELD_LABEL)) {
+    const a = JSON.stringify(before[k] ?? null), b = JSON.stringify(after[k] ?? null);
+    if (a === b) continue;
+    const fmt = v => (v == null || v === '' ? '—' : MONEY_FIELDS.has(k) ? C.money(v) : Array.isArray(v) ? `${v.length} item(ns)` : typeof v === 'boolean' ? (v ? 'sim' : 'não') : String(v));
+    out.push(k === 'color' ? 'cor alterada' : `${FIELD_LABEL[k]}: ${fmt(before[k])} → ${fmt(after[k])}`);
+  }
+  return out;
+}
 async function saveStore(store, map, obj, what) {
   const before = S()[map].get(obj.id) || null;
   await db.put(store, obj); S()[map].set(obj.id, obj);
-  db.log(what || `${STORE_LABEL[store]} ${before ? 'alterada' : 'criada'}: ${obj.name}`.replace('Cofrinho alterada', 'Cofrinho alterado').replace('Cofrinho criada', 'Cofrinho criado'), { before, after: obj });
+  db.log(what || `${STORE_LABEL[store]} ${before ? 'alterada' : 'criada'}: ${obj.name}`.replace('Cofrinho alterada', 'Cofrinho alterado').replace('Cofrinho criada', 'Cofrinho criado'), { details: diffRecord(before, obj), before, after: obj });
   C.refresh();
 }
 async function deleteStore(store, map, obj) {
@@ -227,7 +243,12 @@ function accountDetail(id) {
           ${stat('Previsto no fim do mês', signed(x.planned), sgnCls(x.planned))}
           ${stat('Comprometido', money(x.committed))}
         </div>
-        <div class="btn-row"><button class="primary-btn ghost" data-a="tr">Transferir</button><button class="primary-btn ghost" data-a="add">Lançamento</button></div>
+        <div class="btn-row"><button class="primary-btn ghost" data-a="tr">Transferir</button><button class="primary-btn ghost" data-a="add">Lançamento</button><button class="primary-btn ghost" data-a="rec">Conciliar</button></div>
+        ${a.lastReconciled ? `<p class="hint">Última conciliação: ${C.dmy(a.lastReconciled.date)} · banco ${money(a.lastReconciled.real)} · app ${money(a.lastReconciled.app)}</p>` : ''}
+        ${(() => {
+          const pend = pendingDists(id);
+          return pend.length ? `<div class="section-label"><span>DISTRIBUIÇÕES PENDENTES</span></div>${pend.map(it => row({ a: 'dist', id: `${it.key}@${it.date}`, dot: 'var(--green)', t: esc(C.itemTitle(it)), s: `${C.dm(it.date)} · recebido, aguardando distribuição`, v: money(it.amount), cls: 'pos' })).join('')}` : '';
+        })()}
         ${a.purpose ? `<p class="hint">Finalidade: ${esc(a.purpose)}</p>` : ''}
         <p class="hint">${allowed.length ? `Despesas permitidas: ${allowed.map(esc).join(', ')}` : 'Todas as despesas são permitidas nesta conta.'}</p>
         <div class="section-label"><span>DISTRIBUIÇÃO AUTOMÁTICA DE RECEITAS</span></div>
@@ -241,6 +262,8 @@ function accountDetail(id) {
       tr: async () => { await C.closeAll(); C.openForm({ kind: 'transfer', date: C.today(), from: id }); },
       add: async () => { await C.closeAll(); C.openForm({ date: C.today(), from: id }); },
       rule: i => push(ruleForm(id, +i)),
+      dist: async v => { const [key, date] = v.split('@'); await C.distributeNow(key, date); render(); },
+      rec: () => reconcile(id),
       newRule: () => push(ruleForm(id, -1)),
       pig: pid => push(piggyDetail(pid)),
       goDay,
@@ -268,6 +291,7 @@ function accountForm(a = null) {
       { k: 'archived', label: 'Arquivar (some das listas, mantém o histórico)', type: 'switch', show: () => !!a },
     ],
     onSave: async v => {
+      if (a && v.archived && !a.archived && !(await resolveRuleLinks('account:' + a.id, a.name))) return false;
       const obj = { ...(a || { id: C.uid(), rules: [], order: S().accounts.size, createdAt: C.nowISO() }), ...v };
       await saveStore('accounts', 'accounts', obj);
       C.syncDrawer();
@@ -353,6 +377,140 @@ function ruleForm(accId, idx) {
         if (!(await C.confirmDlg('Excluir regra?', '', 'Excluir', 'danger'))) return;
         const rules = [...acc.rules]; rules.splice(idx, 1);
         await saveStore('accounts', 'accounts', { ...acc, rules }, `Regra de distribuição excluída: ${acc.name}`); back();
+      },
+    },
+  };
+  return view;
+}
+
+
+/**
+ * Um cofrinho/conta usado como destino de regras de distribuição não pode sumir sem resolver o vínculo:
+ * o usuário escolhe um novo destino ou encerra esses passos. Retorna true quando pode prosseguir.
+ */
+async function resolveRuleLinks(target, name) {
+  const links = [];
+  for (const a of S().accounts.values()) (a.rules || []).forEach((r, ri) => (r.steps || []).forEach((st, si) => { if (st.target === target) links.push({ a, ri, si }); }));
+  if (!links.length) return true;
+  const options = [
+    ...[...S().piggies.values()].filter(p => !p.archived && 'piggy:' + p.id !== target).map(p => [`piggy:${p.id}`, `Cofrinho ${p.name}`]),
+    ...C.accountsList().filter(a => 'account:' + a.id !== target).map(a => [`account:${a.id}`, `Conta ${a.name}`]),
+  ];
+  const where = [...new Set(links.map(l => l.a.name))].map(C.esc).join(', ');
+  const res = await C.dialog({
+    title: 'Vínculo com distribuição',
+    html: `<p>“${C.esc(name)}” é destino de ${links.length} passo(s) de distribuição automática (${where}).</p>
+      <p class="small">Escolha um novo destino ou encerre esses passos. Nada será enviado a destinos inexistentes.</p>
+      ${options.length ? `<select id="rlTarget">${options.map(([v, l]) => `<option value="${v}">Novo destino: ${C.esc(l)}</option>`).join('')}</select>` : ''}`,
+    actions: [{ label: 'Cancelar', value: null }, { label: 'Encerrar passos', value: 'end', cls: 'danger' }, ...(options.length ? [{ label: 'Trocar destino', value: () => document.getElementById('rlTarget').value, cls: 'primary' }] : [])],
+  });
+  if (!res) return false;
+  const byAcc = new Map();
+  for (const l of links) { if (!byAcc.has(l.a.id)) byAcc.set(l.a.id, structuredClone(l.a)); }
+  for (const acc of byAcc.values()) {
+    acc.rules = (acc.rules || []).map(r => ({ ...r, steps: res === 'end' ? r.steps.filter(st => st.target !== target) : r.steps.map(st => (st.target === target ? { ...st, target: res } : st)) })).filter(r => r.steps.length);
+    await saveStore('accounts', 'accounts', acc, res === 'end' ? `Passos de distribuição encerrados (destino removido): ${acc.name}` : `Destino de distribuição trocado: ${acc.name}`);
+  }
+  return true;
+}
+
+
+/** Recebimentos já confirmados cuja distribuição ficou para depois. */
+function pendingDists(accId) {
+  const out = [];
+  for (const ov of S().overrides.values()) {
+    if (!ov.distPending || ov.status !== 'paid') continue;
+    const e = S().entries.get(ov.entryId);
+    if (!e || (e.accountId || S().settings.defaultAccount) !== accId) continue;
+    const d = ov.movedTo || ov.orig;
+    const it = C.findItem(ov.key, d);
+    if (it) out.push(it);
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Conciliação: compara o saldo do app com o saldo real e registra a diferença como ajuste (sem apagar nada). */
+async function reconcile(accId) {
+  const acc = S().accounts.get(accId);
+  const x = bal().accounts.get(accId);
+  const app = x ? x.real : 0;
+  const real = await C.dialog({
+    title: `Conciliar ${acc.name}`,
+    html: `<p>Saldo no app hoje: <b>${C.money(app)}</b></p><input type="text" inputmode="decimal" id="rcReal" placeholder="Saldo real no banco">`,
+    actions: [{ label: 'Cancelar', value: null }, { label: 'Conferir', cls: 'primary', validate: () => Number.isFinite(C.parseMoney(document.getElementById('rcReal').value)) || (C.toast('Informe o saldo real'), false), value: () => C.parseMoney(document.getElementById('rcReal').value) }],
+    onOpen: b => setTimeout(() => b.querySelector('#rcReal').focus(), 150),
+  });
+  if (real == null) return;
+  const diff = real - app;
+  const stamp = { date: C.today(), real, app, diff };
+  if (!diff) {
+    await saveStore('accounts', 'accounts', { ...acc, lastReconciled: stamp }, `Conta conciliada sem diferença: ${acc.name}`);
+    C.toast('Saldo confere com o banco');
+    return;
+  }
+  const ok = await C.confirmDlg('Registrar diferença?', `O banco mostra ${C.money(real)} e o app ${C.money(app)}.<br>Será lançado um <b>ajuste de ${C.money(Math.abs(diff))}</b> (${diff > 0 ? 'entrada' : 'saída'}) com a data de hoje. Nada do histórico é apagado.`, 'Registrar ajuste');
+  if (!ok) return;
+  const ch = onceEntry({ kind: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff), date: C.today(), accountId: accId, title: 'Ajuste de conciliação' });
+  for (const e of ch.entries.values()) e.reconcile = true;
+  await C.commit(`Ajuste de conciliação: ${acc.name}`, ch);
+  await saveStore('accounts', 'accounts', { ...S().accounts.get(accId), lastReconciled: stamp }, `Conta conciliada: ${acc.name} (diferença ${C.money(diff)})`);
+}
+
+// ------------------------------------------------------------------ FECHAMENTO MENSAL
+function closingView() {
+  let ref = C.today();
+  const view = {
+    title: 'Fechamento do mês',
+    body: () => {
+      const { money, signed, sgnCls, esc, dm } = C;
+      const { y, m } = parse(ref);
+      const from = iso(y, m, 1), to = iso(y, m, daysInMonth(y, m));
+      const t = C.today();
+      const ym = from.slice(0, 7);
+      const r = C.F.periodReport(from, to, S().data, S().set);
+      const items = itemsFor(it => C.accVisible(it), from, to);
+      const tr = items.filter(i => i.kind === 'transfer' && counts(i));
+      const pend = items.filter(i => i.date <= t && (i.kind === 'income' || i.kind === 'expense') && (i.status === 'planned' || i.status === 'pending' || i.status === 'partial')).reverse();
+      const unchecked = [];
+      for (let d = 1; d <= daysInMonth(y, m); d++) { const ds = iso(y, m, d); if (ds <= t && !S().checks.has(ds) && items.some(i => i.date === ds && i.kind === 'expense' && i.status === 'planned')) unchecked.push(ds); }
+      const closed = (S().settings.closedMonths || {})[ym];
+      return `<div class="period-nav"><button class="icon-btn" data-a="prev">${C.icon('left')}</button><span>${MONTHS[m - 1]} ${y}</span><button class="icon-btn" data-a="next">${C.icon('right')}</button></div>
+        ${closed ? `<p class="hint">Mês fechado em ${C.dmy(closed.at.slice(0, 10))}${closed.pending ? ` com ${closed.pending} pendência(s)` : ''}.</p>` : ''}
+        <div class="stats">
+          ${stat('Resultado realizado', signed(r.incReal - r.expReal), sgnCls(r.incReal - r.expReal), true)}
+          ${stat('Receitas recebidas', `${money(r.incReal)} de ${money(r.inc)}`, 'pos')}
+          ${stat('Despesas pagas', `${money(r.expReal)} de ${money(r.exp)}`, 'neg')}
+          ${stat('Transferências', `${tr.length} · ${money(tr.reduce((s2, i) => s2 + i.amount, 0))}`)}
+          ${stat('Pendências até hoje', String(pend.length), pend.length ? 'neg' : 'pos')}
+          ${stat('Dias não conferidos', String(unchecked.length), unchecked.length ? 'neg' : 'pos')}
+        </div>
+        ${unchecked.length ? `<div class="btn-row"><button class="primary-btn ghost" data-a="check">Concluir conferência de ${unchecked.length} dia(s)</button></div>` : ''}
+        ${pend.length ? `<div class="section-label"><span>PENDÊNCIAS</span></div>${pend.slice(0, 40).map(it => movementRow(it)).join('')}` : '<p class="hint">Nenhuma pendência neste mês.</p>'}
+        <div class="btn-row"><button class="primary-btn" data-a="close">${closed ? 'Fechar novamente' : 'Fechar o mês'}</button>${closed ? '<button class="primary-btn ghost" data-a="reopen">Reabrir</button>' : ''}</div>
+        <p class="hint">Fechar o mês só registra a conferência. Nada é bloqueado ou apagado: lançamentos antigos continuam editáveis.</p>`;
+    },
+    actions: {
+      prev: () => { const { y, m } = parse(ref); const n = addMonths(y, m, -1); ref = iso(n.y, n.m, 1); render(); },
+      next: () => { const { y, m } = parse(ref); const n = addMonths(y, m, 1); ref = iso(n.y, n.m, 1); render(); },
+      goDay,
+      check: async () => {
+        const { y, m } = parse(ref); const t = C.today(); const days = [];
+        for (let d = 1; d <= daysInMonth(y, m); d++) { const ds = iso(y, m, d); if (ds <= t && !S().checks.has(ds)) days.push(ds); }
+        await C.finishCheck(days); render();
+      },
+      close: async () => {
+        const { y, m } = parse(ref); const ym = iso(y, m, 1).slice(0, 7);
+        const t = C.today();
+        const pend = itemsFor(it => C.accVisible(it) && it.date <= t && (it.kind === 'income' || it.kind === 'expense') && (it.status === 'planned' || it.status === 'pending' || it.status === 'partial'), iso(y, m, 1), iso(y, m, daysInMonth(y, m))).length;
+        if (pend && !(await C.confirmDlg('Fechar com pendências?', `Ainda há ${pend} lançamento(s) não confirmados neste mês. Eles continuam pendentes depois do fechamento.`, 'Fechar mesmo assim'))) return;
+        S().settings.closedMonths = { ...(S().settings.closedMonths || {}), [ym]: { at: C.nowISO(), pending: pend } };
+        C.saveSettings(); db.log(`Mês fechado: ${MONTHS[m - 1]} ${y}`, { details: [`${pend} pendência(s) no fechamento`] });
+        C.toast('Mês fechado'); render();
+      },
+      reopen: () => {
+        const { y, m } = parse(ref); const ym = iso(y, m, 1).slice(0, 7);
+        const cm = { ...(S().settings.closedMonths || {}) }; delete cm[ym];
+        S().settings.closedMonths = cm; C.saveSettings(); db.log(`Mês reaberto: ${MONTHS[m - 1]} ${y}`, {}); render();
       },
     },
   };
@@ -460,6 +618,7 @@ function piggyForm(p = null) {
       { k: 'archived', label: 'Arquivar', type: 'switch', show: () => !!p },
     ],
     onSave: async v => {
+      if (p && v.archived && !p.archived && !(await resolveRuleLinks('piggy:' + p.id, p.name))) return false;
       const obj = { ...(p || { id: C.uid(), createdAt: C.nowISO() }), ...v };
       if (!p && v.type === 'real') {
         const acc = { id: C.uid(), name: v.name, type: 'piggy', institution: '', initialBalance: 0, color: v.color, purpose: `Cofrinho ${v.name}`, includeInTotal: true, archived: false, allowedTags: [], rules: [], order: S().accounts.size, createdAt: C.nowISO() };
@@ -471,6 +630,8 @@ function piggyForm(p = null) {
       C.toast(p ? 'Cofrinho atualizado' : 'Cofrinho criado');
     },
     onDelete: p && (async () => {
+      if (!(await resolveRuleLinks('piggy:' + p.id, p.name))) return false;
+      if (p.type === 'real' && !(await resolveRuleLinks('account:' + p.accountId, p.name))) return false;
       const saved = (bal().piggies.get(p.id) || {}).saved || 0;
       if (p.type === 'real') {
         // cofrinho real = conta separada: a conta e o dinheiro continuam existindo, só deixa de ser cofrinho
@@ -495,9 +656,11 @@ function metasView() {
   return {
     title: 'Metas e orçamentos', right: { icon: 'plus', fn: () => push(metaForm()) },
     body: () => {
-      const list = [...S().metas.values()].filter(m => !m.archived);
+      const list = [...S().metas.values()].filter(C.metaVisible);
       const bctx = C.budgetCtx();
-      return list.map(m => metaCard(m, C.F.metaProgress(m, C.today(), bctx))).join('')
+      const hiddenN = [...S().metas.values()].filter(m => !m.archived && !C.metaVisible(m)).length;
+      return list.map(m => metaCard(m, C.F.metaProgress(C.scopedMeta(m), C.today(), bctx))).join('')
+        + (hiddenN ? `<p class="hint">${hiddenN} meta(s) de contas ocultas não aparecem. Mostre a conta em Menu › Contas no calendário.</p>` : '')
         || '<div class="empty">Nenhuma meta. Crie limites por dia, semana ou mês, agrupando tags.</div>';
     },
     actions: { open: id => push(metaDetail(id)) },
@@ -531,7 +694,7 @@ function metaDetail(id) {
       const m = S().metas.get(id); if (!m) return '';
       const { money, dm, dmy, esc } = C;
       const bctx = C.budgetCtx();
-      const p = C.F.metaProgress(m, ref, bctx);
+      const p = C.F.metaProgress(C.scopedMeta(m), ref, bctx);
       const inc = m.kind === 'income';
       const daily = C.F.DAY_PERIODS.has(m.period);
       const tags = (m.tagIds || []).map(t => C.tag(t)).filter(Boolean);
@@ -583,9 +746,15 @@ function metaDetail(id) {
   return view;
 }
 
+/** Meta nova nasce na conta que está sendo vista (ou na principal), para cada conta ter as suas metas. */
+function newMetaAccounts() {
+  if (C.accountsList().length < 2) return [];
+  const shown = C.accountsList().filter(x => S().set && S().set.has(x.id)).map(x => x.id);
+  return C.filtering() && shown.length ? shown : [S().settings.defaultAccount];
+}
 function metaForm(m = null) {
   const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', ') }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], accountIds: [], originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
+    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
@@ -601,7 +770,7 @@ function metaForm(m = null) {
       { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch' },
       { section: 'O que entra na meta' },
       { k: 'tagIds', label: 'Tags (nenhuma = todas)', type: 'multi', options: () => tagOptions(null)() },
-      { k: 'accountIds', label: 'Contas (nenhuma = todas)', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
+      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: marque só a Conta iFood para uma meta da bike', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
       { k: 'originsTxt', label: 'Origens', placeholder: 'Ex.: iFood, Salário CLT', show: v => v.kind === 'income' },
       { section: 'Sobras e excedentes', show: v => daily(v) && v.kind !== 'income' },
       { k: 'rollover', label: 'Valor não usado', type: 'select', options: Object.entries(ROLLOVER), show: v => daily(v) && v.kind !== 'income' },
@@ -657,9 +826,10 @@ function reportsView() {
       const byTag = [...r.byTag].sort((a, b) => b[1] - a[1]);
       const tagMax = Math.max(1, ...byTag.map(x => x[1]));
       // metas mensais cumpridas no período
-      const metas = [...S().metas.values()].filter(x => !x.archived && x.kind !== 'income');
-      const met = metas.map(x => C.F.metaProgress(x, mode === 'month' ? ref : iso(y, 12, 31), C.budgetCtx())).filter(p => p.limit);
-      return `<div class="segmented seg-sm"><button class="${mode === 'month' ? 'on' : ''}" data-a="mode" data-id="month">Mês</button><button class="${mode === 'year' ? 'on' : ''}" data-a="mode" data-id="year">Ano</button></div>
+      const metas = [...S().metas.values()].filter(x => C.metaVisible(x) && x.kind !== 'income');
+      const met = metas.map(x => C.F.metaProgress(C.scopedMeta(x), mode === 'month' ? ref : iso(y, 12, 31), C.budgetCtx())).filter(p => p.limit);
+      return `<div class="btn-row"><button class="primary-btn ghost" data-a="closing">Fechamento do mês</button></div>
+        <div class="segmented seg-sm"><button class="${mode === 'month' ? 'on' : ''}" data-a="mode" data-id="month">Mês</button><button class="${mode === 'year' ? 'on' : ''}" data-a="mode" data-id="year">Ano</button></div>
         <div class="period-nav"><button class="icon-btn" data-a="prev">${C.icon('left')}</button><span>${mode === 'month' ? `${MONTHS[m - 1]} ${y}` : y}</span><button class="icon-btn" data-a="next">${C.icon('right')}</button></div>
         <div class="stats">
           ${stat('Economia realizada', signed(saving), sgnCls(saving), true)}
@@ -677,6 +847,7 @@ function reportsView() {
     },
     actions: {
       mode: id => { mode = id; render(); },
+      closing: () => push(closingView()),
       prev: () => { const { y, m } = parse(ref); const n = mode === 'month' ? addMonths(y, m, -1) : { y: y - 1, m }; ref = iso(n.y, n.m, 1); render(); },
       next: () => { const { y, m } = parse(ref); const n = mode === 'month' ? addMonths(y, m, 1) : { y: y + 1, m }; ref = iso(n.y, n.m, 1); render(); },
       open: id => push(metaDetail(id)),
@@ -704,7 +875,8 @@ function historyView() {
         if (dLocal !== day) { day = dLocal; html += `<div class="hist-day">${C.dmy(dLocal)}</div>`; }
         const label = h.action === 'undo' ? `Desfeito: ${(h.payload && h.payload.label) || ''}` : NAMES[h.action] || h.action;
         const n = h.payload && h.payload.overrides ? h.payload.overrides.length + (h.payload.entries || []).length : 0;
-        html += `<div class="hist"><span>${esc(label)}${n > 1 ? ` <span class="muted small">(${n} registros)</span>` : ''}</span><span>${local ? local.toTimeString().slice(0, 5) : ''}</span></div>`;
+        const det = (h.payload && h.payload.details) || [];
+        html += `<div class="hist"><span>${esc(label)}${n > 1 && !det.length ? ` <span class="muted small">(${n} registros)</span>` : ''}${det.length ? `<span class="hist-det">${det.map(esc).join('<br>')}</span>` : ''}</span><span>${local ? local.toTimeString().slice(0, 5) : ''}</span></div>`;
       }
       return html;
     },
@@ -732,7 +904,7 @@ function alertsView() {
   };
 }
 
-const VIEWS = { accounts: accountsView, piggies: piggiesView, metas: metasView, reports: reportsView, history: historyView, alerts: alertsView };
+const VIEWS = { closing: closingView, accounts: accountsView, piggies: piggiesView, metas: metasView, reports: reportsView, history: historyView, alerts: alertsView };
 
 // ------------------------------------------------------------------ PAINÉIS DA TELA INICIAL
 const openPanels = new Set();
@@ -751,8 +923,8 @@ export function renderPanels(box) {
         body: list.map(a => row({ a: 'page', id: 'accounts', dot: a.color, t: esc(a.name), v: signed((b.accounts.get(a.id) || {}).real || 0) })).join('') + `<span class="kv"><span>Disponível</span><span>${money(b.totals.available)}</span></span>` };
     },
     metas: () => {
-      const ms = [...S().metas.values()].filter(m => !m.archived);
-      const ps = ms.map(m => [m, C.F.metaProgress(m, t, C.budgetCtx())]);
+      const ms = [...S().metas.values()].filter(C.metaVisible);
+      const ps = ms.map(m => [m, C.F.metaProgress(C.scopedMeta(m), t, C.budgetCtx())]);
       const over = ps.filter(([m, p]) => m.kind !== 'income' && p.over > 0).length;
       return { label: 'Metas', value: ms.length ? (over ? `${over} acima do limite` : 'Dentro do limite') : 'Nenhuma', cls: over ? 'neg' : '',
         body: ps.map(([m, p]) => metaCard(m, p).replace('data-a="open"', 'data-a="meta"')).join('') };
@@ -865,9 +1037,40 @@ export function validateBackup(data) {
   const ids = new Set(clean.entries.map(e => e.id));
   const orphan = clean.overrides.filter(o => !ids.has(o.entryId)).length;
   if (orphan) { clean.overrides = clean.overrides.filter(o => ids.has(o.entryId)); notes.push(`${orphan} ajuste(s) sem lançamento foram ignorados.`); }
+  // referências entre registros: contas, tags, cofrinhos, metas, regras de distribuição e transferências
   const accIds = new Set(clean.accounts.map(a => a.id));
-  const noAcc = clean.entries.filter(e => (e.accountId && !accIds.has(e.accountId)) || (e.toAccountId && !accIds.has(e.toAccountId))).length;
-  if (noAcc && clean.accounts.length) notes.push(`${noAcc} lançamento(s) apontam para contas que não estão no arquivo; irão para a conta principal.`);
+  const tagIds = new Set(clean.tags.map(t => t.id));
+  const pigIds = new Set(clean.piggies.map(p => p.id));
+  const warn = (n, txt) => { if (n) notes.push(`${n} ${txt}`); };
+  let n = 0;
+  if (clean.accounts.length) {
+    n = clean.entries.filter(e => e.accountId && !accIds.has(e.accountId)).length;
+    warn(n, 'lançamento(s) com conta inexistente: irão para a conta principal.');
+    const badTr = clean.entries.filter(e => e.kind === 'transfer' && (!e.toAccountId || !accIds.has(e.toAccountId) || e.toAccountId === e.accountId));
+    warn(badTr.length, 'transferência(s) com conta de destino inválida foram ignoradas.');
+    if (badTr.length) { const bad = new Set(badTr.map(e => e.id)); clean.entries = clean.entries.filter(e => !bad.has(e.id)); clean.overrides = clean.overrides.filter(o => !bad.has(o.entryId)); }
+  }
+  n = 0; for (const e of clean.entries) if (e.tagId && !tagIds.has(e.tagId)) { e.tagId = null; n++; }
+  warn(n, 'lançamento(s) com tag inexistente ficaram sem tag.');
+  n = 0; for (const e of clean.entries) if (e.piggyId && !pigIds.has(e.piggyId) && (e.kind === 'reserve' || e.kind === 'release')) n++;
+  warn(n, 'movimento(s) de cofrinho apontam para cofrinho inexistente.');
+  n = clean.piggies.filter(p => p.accountId && clean.accounts.length && !accIds.has(p.accountId)).length;
+  warn(n, 'cofrinho(s) ligados a conta inexistente.');
+  n = 0;
+  for (const m of clean.metas) {
+    const t0 = (m.tagIds || []).length, a0 = (m.accountIds || []).length;
+    m.tagIds = (m.tagIds || []).filter(id => tagIds.has(id));
+    if (clean.accounts.length) m.accountIds = (m.accountIds || []).filter(id => accIds.has(id));
+    if (m.tagIds.length !== t0 || (m.accountIds || []).length !== a0) n++;
+  }
+  warn(n, 'meta(s) tinham tags ou contas inexistentes (vínculos removidos).');
+  n = 0;
+  for (const a of clean.accounts) for (const r of a.rules || []) {
+    const before = (r.steps || []).length;
+    r.steps = (r.steps || []).filter(st => { const [k, id] = String(st.target || '').split(':'); return k === 'piggy' ? pigIds.has(id) : k === 'account' ? accIds.has(id) : false; });
+    n += before - r.steps.length;
+  }
+  warn(n, 'passo(s) de regras de distribuição apontavam para destino inexistente e foram removidos.');
   if (!clean.entries.length && !clean.accounts.length && !clean.metas.length) return { ok: false, errors: ['O arquivo não contém dados.'] };
   return { ok: true, stores: clean, notes, demo: !!data.demo, exportedAt: data.exportedAt };
 }
@@ -882,7 +1085,7 @@ export async function importBackup(file) {
   const ok = await C.confirmDlg(v.demo ? 'Importar dados de demonstração?' : 'Restaurar backup?',
     `${v.demo ? '<b>Arquivo de DEMONSTRAÇÃO.</b><br>' : `Backup de ${C.dmy(String(v.exportedAt || '').slice(0, 10) || C.today())}.<br>`}
      ${n('entries')} lançamentos · ${n('accounts')} contas · ${n('metas')} metas · ${n('piggies')} cofrinhos · ${n('tags')} tags
-     ${v.notes.length ? `<br><span class="small">${v.notes.map(C.esc).join('<br>')}</span>` : ''}
+     ${v.notes.length ? `<br><br><b>Atenção — problemas encontrados e corrigidos na importação:</b><br><span class="small">${v.notes.map(C.esc).join('<br>')}</span>` : '<br><span class="small">Arquivo verificado: nenhuma referência inválida.</span>'}
      <br><br>Os dados atuais deste aparelho serão <b>substituídos</b>.${hasMine ? ' Antes disso, uma cópia de segurança deles será baixada automaticamente.' : ''}`,
     'Substituir', 'danger');
   if (!ok) return;

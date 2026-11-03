@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.4.0';
+export const APP_VERSION = '1.6.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -44,7 +44,7 @@ const sgnCls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : 'muted');
 
 // ---------- Estado ----------
 const DEFAULTS = {
-  showIncome: true, showExpense: true, showTags: false, hiddenTags: [], showMovement: false,
+  showIncome: true, showExpense: true, showTags: true, hiddenTags: [], showMovement: false,
   showTransfers: true, hiddenAccounts: [], defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
@@ -65,6 +65,26 @@ const multiAcc = () => accountsList().length > 1;
 function visibleAccounts() {
   const hidden = new Set(S.settings.hiddenAccounts);
   return new Set(accountsList().filter(a => a.includeInTotal !== false && !hidden.has(a.id)).map(a => a.id));
+}
+// Cada conta é um "mundo" separado: ocultar uma conta esconde seus lançamentos, metas e alertas.
+// (Só a exibição muda — nada é apagado e os saldos de cada conta continuam corretos.)
+const filtering = () => (S.settings.hiddenAccounts || []).length > 0;
+function accVisible(it) {
+  if (!S.set) return true;
+  if (it.kind === 'transfer') return S.set.has(it.accountId) || S.set.has(it.toAccountId);
+  return S.set.has(it.accountId);
+}
+/** Meta visível: ligada a alguma conta visível (ou a todas). */
+function metaVisible(m) {
+  if (m.archived) return false;
+  const ids = m.accountIds || [];
+  return !ids.length || ids.some(id => S.set.has(id));
+}
+/** Meta "para todas as contas" passa a contar só as contas visíveis quando há filtro. */
+function scopedMeta(m) {
+  const ids = m.accountIds || [];
+  if (!filtering()) return m;
+  return { ...m, accountIds: ids.length ? ids.filter(id => S.set.has(id)) : [...S.set] };
 }
 /** Cor de exibição da tag: variação da cor da meta, quando a meta pede isso. */
 function tagColor(t) {
@@ -117,14 +137,52 @@ function saveSettings() {
 const undoStack = [];
 const STORE_OF = { entries: 'entries', overrides: 'overrides', checks: 'checks' };
 
+const ST_NAMES = { planned: 'previsto', paid: 'pago', pending: 'pendente', cancelled: 'cancelado', partial: 'parcial' };
+/** Texto do histórico: o que mudou, com valores anteriores e posteriores. */
+function describeChanges(ch) {
+  const out = [];
+  const m = c => (c == null ? '—' : money(c));
+  for (const [key, after] of ch.overrides) {
+    const before = S.overrides.get(key) || {};
+    const e = S.entries.get((after || before).entryId) || ch.entries.get((after || before).entryId) || {};
+    const who = `${e.title || (tag(e.tagId) || {}).name || KIND_NAME[e.kind] || 'Lançamento'} ${dm(key.split('|')[1] || '')}`;
+    const a = after || {};
+    const parts = [];
+    if ((before.status || 'planned') !== (a.status || 'planned')) parts.push(`situação: ${ST_NAMES[before.status || 'planned']} → ${ST_NAMES[a.status || 'planned']}`);
+    if (before.amount !== a.amount) parts.push(`valor: ${before.amount != null ? m(before.amount) : m(e.amount)} → ${a.amount != null ? m(a.amount) : m(e.amount)}`);
+    if (before.paidAmount !== a.paidAmount && (before.paidAmount || a.paidAmount)) parts.push(`valor pago: ${m(before.paidAmount || 0)} → ${m(a.paidAmount || 0)}`);
+    if (before.movedTo !== a.movedTo) parts.push(`data: ${before.movedTo ? dm(before.movedTo) : 'original'} → ${a.movedTo ? dm(a.movedTo) : 'original'}`);
+    if ((before.title ?? null) !== (a.title ?? null)) parts.push(`descrição: “${before.title ?? e.title ?? ''}” → “${a.title ?? e.title ?? ''}”`);
+    if (('tagId' in before ? before.tagId : null) !== ('tagId' in a ? a.tagId : null)) parts.push('tag alterada');
+    if (parts.length) out.push(`${who}: ${parts.join('; ')}`);
+  }
+  for (const [id, after] of ch.entries) {
+    const before = S.entries.get(id);
+    const name = (after || before || {}).title || KIND_NAME[(after || before || {}).kind] || 'Lançamento';
+    if (!before && after) { out.push(`Criado: ${name} ${money(after.amount)} (${RULES[after.rule.type].toLowerCase()}, a partir de ${dm(after.rule.start)})`); continue; }
+    if (before && !after) { out.push(`Excluído: ${name} ${money(before.amount)}`); continue; }
+    const parts = [];
+    if (before.amount !== after.amount) parts.push(`valor ${money(before.amount)} → ${money(after.amount)}`);
+    if (before.title !== after.title) parts.push(`descrição “${before.title || ''}” → “${after.title || ''}”`);
+    if (before.rule.type !== after.rule.type) parts.push(`repetição ${RULES[before.rule.type]} → ${RULES[after.rule.type]}`);
+    if ((before.rule.end || '') !== (after.rule.end || '')) parts.push(`término ${before.rule.end ? dm(before.rule.end) : 'sem fim'} → ${after.rule.end ? dmy(after.rule.end) : 'sem fim'}`);
+    if (before.accountId !== after.accountId) parts.push(`conta ${accName(before.accountId)} → ${accName(after.accountId)}`);
+    if (JSON.stringify(before.segments || []) !== JSON.stringify(after.segments || [])) { const sg = (after.segments || []).at(-1); if (sg && sg.amount != null) parts.push(`novo valor ${money(sg.amount)} a partir de ${dmy(sg.from)}`); }
+    if (parts.length) out.push(`${name}: ${parts.join('; ')}`);
+  }
+  for (const [d, after] of ch.checks) out.push(after ? `Dia ${dm(d)} conferido${after.noExpenses ? ' sem gastos' : ''}` : `Conferência de ${dm(d)} reaberta`);
+  return out.length > 25 ? [...out.slice(0, 25), `… e mais ${out.length - 25} alteração(ões)`] : out;
+}
+
 async function commit(label, ch, { silent = false } = {}) {
   if (!ops.changeCount(ch)) return false;
   const inverse = ops.newChanges();
   for (const k of Object.keys(STORE_OF)) for (const [id] of ch[k]) inverse[k].set(id, S[k].get(id) ?? null);
+  const details = describeChanges(ch); // antes de aplicar: precisa do estado anterior
   await applyChanges(ch);
   undoStack.push({ label, inverse });
   if (undoStack.length > 30) undoStack.shift();
-  db.log(label, { entries: [...ch.entries], overrides: [...ch.overrides], checks: [...ch.checks] });
+  db.log(label, { details, entries: [...ch.entries], overrides: [...ch.overrides], checks: [...ch.checks] });
   refresh();
   if (!silent) toast(label, undoLast);
   return true;
@@ -178,7 +236,7 @@ function updateScrim() { $('#scrim').classList.toggle('on', layers.some(l => l.e
 const isOpen = el => layers.some(l => l.el === el);
 
 // ---------- Tela larga (PC/tablet): detalhes do dia ficam fixos à direita ----------
-const wideMQ = window.matchMedia('(min-width: 900px)');
+const wideMQ = window.matchMedia('(min-width: 1100px)');
 const isWide = () => wideMQ.matches;
 const dayVisible = () => (isWide() ? !!S.dayOpen : isOpen($('#daySheet')));
 function applyLayout() {
@@ -277,13 +335,16 @@ function renderHeader() {
   const { y, m } = S.view;
   $('#monthName').textContent = MONTHS[m - 1];
   $('#yearName').textContent = y;
+  // quando há contas ocultas, mostra qual conta ("mundo") está sendo exibida
+  const shown = filtering() ? accountsList().filter(x => S.set && S.set.has(x.id)).map(x => x.name) : [];
+  $('#accLabel').textContent = shown.length ? shown.join(' + ') : (filtering() ? 'Nenhuma conta' : '');
   const order = S.settings.mondayFirst ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
   $('#weekdays').innerHTML = order.map(w => `<div>${WEEKDAYS_SHORT[w]}</div>`).join('');
 }
 
 const countsPlanned = it => it.status === 'planned' || it.status === 'paid' || it.status === 'pending' || it.status === 'partial';
 const budgetCtx = () => ({ data: S.data, checks: S.checks, today: today(), isHoliday: S.isHoliday, mondayFirst: S.settings.mondayFirst });
-const calendarMeta = () => [...S.metas.values()].find(m => !m.archived && m.showOnCalendar && F.DAY_PERIODS.has(m.period)) || null;
+const calendarMeta = () => { const m = [...S.metas.values()].find(x => metaVisible(x) && x.showOnCalendar && F.DAY_PERIODS.has(x.period)); return m ? scopedMeta(m) : null; };
 function cellValue(day) {
   const s = S.settings, real = s.basis === 'realized';
   if (s.showIncome && s.showExpense) return real ? day.cumNetReal : day.cumNet;
@@ -331,17 +392,17 @@ function renderGrid(anim) {
     if (w === 0 || w === 6) cls += ' wkend';
     if (S.isHoliday(date)) cls += ' hol';
     if (date === t) cls += ' today';
-    if (S.selecting ? S.picked.has(date) : date === S.selected && dayVisible()) cls += S.selecting ? ' picked' : ' sel';
+    if (S.selecting ? S.picked.has(date) : date === S.selected && dayVisible() && (!isWide() || S.dayChosen)) cls += S.selecting ? ' picked' : ' sel';
     const n = +date.slice(8);
     if (!inMonth) { html += `<button class="${cls}" data-date="${date}"><span class="num">${n}</span></button>`; continue; }
     const day = month.days[n - 1];
     let inner = `<span class="num">${n}</span>`;
-    if (day.items.some(it => it.status === 'pending')) inner += '<span class="flag"></span>';
+    if (day.items.some(it => it.status === 'pending' && accVisible(it))) inner += '<span class="flag"></span>';
     if (maxLines) inner += dayLines(day, maxLines);
     if (s.showTags) {
       const colors = new Map();
       for (const it of day.items) {
-        if (!it.tagId || hidden.has(it.tagId) || !countsPlanned(it)) continue;
+        if (!it.tagId || hidden.has(it.tagId) || !countsPlanned(it) || !accVisible(it)) continue;
         if ((it.kind === 'income' && !s.showIncome) || (it.kind === 'expense' && !s.showExpense)) continue;
         for (const tid of it.splits ? it.splits.map(p => p.tagId) : [it.tagId]) {
           const tg = tag(tid);
@@ -366,10 +427,10 @@ function renderGrid(anim) {
 
 /** Lançamentos escritos dentro do dia (modo expandido/PC). Respeita filtros; não altera nada. */
 function dayLines(day, max) {
-  const s = S.settings, hidden = new Set(s.hiddenTags);
-  if (!s.showTags) return ''; // tags desligadas: os lançamentos somem da grade (continuam nos cálculos)
-  const list = day.items.filter(it => countsPlanned(it) &&
-    !(it.tagId && hidden.has(it.tagId)) && !(it.splits && it.splits.every(p => hidden.has(p.tagId))) &&
+  const s = S.settings;
+  // Filtros independentes: Receitas/Despesas decidem QUAIS lançamentos aparecem;
+  // Tags decide só se o NOME e a COR da tag aparecem. Nada disso mexe nos cálculos.
+  const list = day.items.filter(it => countsPlanned(it) && accVisible(it) &&
     ((it.kind === 'income' && s.showIncome) || (it.kind === 'expense' && s.showExpense) ||
      (isInternal(it) && s.showTransfers && it.kind === 'transfer')));
   if (!list.length) return '';
@@ -379,10 +440,9 @@ function dayLines(day, max) {
   const show = list.length > max ? list.slice(0, max >= 2 ? max - 1 : 1) : list;
   const rest = list.length - show.length;
   const line = it => {
-    const tg = tag(it.tagId);
-    const visTag = s.showTags && tg && !hidden.has(tg.id);
-    const color = visTag ? tagColor(tg) : it.kind === 'income' ? 'var(--green)' : it.kind === 'expense' ? 'var(--red)' : 'var(--accent)';
-    const name = it.title || (visTag ? tg.name : KIND_NAME[it.kind]);
+    const tg = visibleTag(it.tagId);
+    const color = tg ? tagColor(tg) : it.kind === 'income' ? 'var(--green)' : it.kind === 'expense' ? 'var(--red)' : 'var(--accent)';
+    const name = itemTitle(it);
     const sg = itemSign(it);
     return `<span class="ln${it.status === 'paid' ? ' done' : ''}"><i style="background:${color}"></i><b>${esc(name)}</b><em class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
   };
@@ -442,7 +502,7 @@ function refreshDerived() {
     const { y, m } = parse(t);
     S.bal = F.balances({ data: S.data, accounts: accountsList(true), piggies: [...S.piggies.values()], today: t, planUpto: iso(y, m, daysInMonth(y, m)) });
     S.alerts = F.computeAlerts({
-      data: S.data, metas: [...S.metas.values()], checks: S.checks, today: t, isHoliday: S.isHoliday, mondayFirst: S.settings.mondayFirst,
+      data: S.data, metas: [...S.metas.values()].filter(metaVisible).map(scopedMeta), checks: S.checks, today: t, isHoliday: S.isHoliday, mondayFirst: S.settings.mondayFirst,
       enabled: S.settings.alerts, set: S.set, startBalance: [...S.set].reduce((a, id) => a + ((S.bal.accounts.get(id) || {}).real || 0), 0),
       lastBackup: S.settings.lastBackup, hasData: S.entries.size > 0,
     });
@@ -473,8 +533,10 @@ function statusLabel(it) {
 }
 const KIND_NAME = { income: 'Receita', expense: 'Despesa', transfer: 'Transferência', reserve: 'Guardado no cofrinho', release: 'Retirado do cofrinho' };
 function itemTitle(it) {
-  if (it.title) return it.title;
-  if (visibleTag(it.tagId)) return tag(it.tagId).name;
+  const t = tag(it.tagId);
+  // com a tag oculta, o nome dela não aparece — nem quando a descrição é igual ao nome da tag
+  if (it.title && !(t && !visibleTag(t.id) && it.title === t.name)) return it.title;
+  if (visibleTag(it.tagId)) return t.name;
   if (it.kind === 'reserve') return 'Guardado';
   if (it.kind === 'release') return 'Retirado';
   return KIND_NAME[it.kind];
@@ -524,6 +586,16 @@ function itemRow(it, { quick = false } = {}) {
 }
 
 function renderDay(date) {
+  // PC sem data escolhida: o painel lateral fica discreto, só com uma orientação
+  if (isWide() && !S.dayChosen) {
+    $('#dayTitle').textContent = '';
+    $('#daySub').textContent = '';
+    $('#dayBody').innerHTML = '<div class="day-hint"><b>Selecione uma data</b>Clique em um dia do calendário para ver os lançamentos, valores e tags daquela data.</div>';
+    $('#dayFoot').innerHTML = '';
+    $('#btnDaySelect').hidden = true;
+    return;
+  }
+  $('#btnDaySelect').hidden = false;
   const d = dayData(date);
   const w = weekday(date);
   const t = today();
@@ -534,23 +606,25 @@ function renderDay(date) {
   $('#daySub').innerHTML = esc(sub) + (check ? ` · <span class="checked-note">${icon('check')}Conferido${check.noExpenses ? ' sem gastos' : ''}</span>` : '');
 
   const checking = S.checking === date;
-  const inc = d.items.filter(i => i.kind === 'income');
-  const exp = d.items.filter(i => i.kind === 'expense');
-  const internal = S.settings.showTransfers ? d.items.filter(isInternal) : [];
+  const inc = d.items.filter(i => i.kind === 'income' && accVisible(i));
+  const exp = d.items.filter(i => i.kind === 'expense' && accVisible(i));
+  const internal = S.settings.showTransfers ? d.items.filter(i => isInternal(i) && accVisible(i)) : [];
   let html = `<div class="balance">
     <div><small>Acumulado previsto</small><b class="${sgnCls(d.cumNet)}">${signed(d.cumNet)}</b></div>
     <div><small>Realizado</small><b class="${sgnCls(d.cumNetReal)}">${signed(d.cumNetReal)}</b></div>
   </div>`;
-  if (!d.items.filter(i => !isInternal(i) || S.settings.showTransfers).length) html += `<div class="empty">${checking ? 'Nenhum lançamento previsto. Adicione um gasto ou conclua como dia sem gastos.' : 'Nenhum lançamento.'}</div>`;
+  if (!d.items.filter(i => accVisible(i) && (!isInternal(i) || S.settings.showTransfers)).length) html += `<div class="empty">${checking ? 'Nenhum lançamento previsto. Adicione um gasto ou conclua como dia sem gastos.' : 'Nenhum lançamento.'}</div>`;
   if (inc.length) html += `<div class="section-label"><span>RECEITAS</span><span>${money(d.inc)}</span></div>${inc.map(i => itemRow(i, { quick: checking })).join('')}`;
   if (exp.length) html += `<div class="section-label"><span>DESPESAS</span><span>${money(d.exp)}</span></div>${exp.map(i => itemRow(i, { quick: checking })).join('')}`;
   if (internal.length) html += `<div class="section-label"><span>ENTRE CONTAS E COFRINHOS</span></div>${internal.map(i => itemRow(i)).join('')}`;
   const cm = calendarMeta();
   const b = cm && F.dailyBudget(cm, date, date, budgetCtx()).get(date);
   if (b) {
-    const txt = { saved: `economia de ${money(b.avail - b.spent)}`, ok: 'no limite', over: `excedeu ${money(b.spent - b.avail)}`, zero: 'conferido sem gastos', pending: 'aguardando conferência', open: `disponível ${money(Math.max(0, b.avail - b.spent))}`, future: `disponível ${money(b.avail)}` }[b.status];
-    const col = b.status === 'over' ? cm.colorBad || 'var(--red)' : ['saved', 'ok', 'zero'].includes(b.status) ? cm.colorGood || 'var(--green)' : 'var(--text-3)';
-    html = `<div class="budget-line"><span class="pill" style="background:${col}"></span><span>${esc(cm.name)}: ${money(b.spent)} de ${money(b.avail)} · ${txt}</span></div>` + html;
+    // orçamento previsto, gasto realizado, gasto pendente e economia efetiva — separados
+    const res = { saved: `economia efetiva ${money(b.limit - b.spent)}`, ok: 'no limite', over: `excedente ${money(b.spent - b.avail)}`, zero: `sem gastos · economia ${money(b.limit)}`,
+      pending: b.pending ? 'conferência pendente' : 'aguardando conferência', open: `disponível ${money(Math.max(0, b.avail - b.spent))}`, future: `disponível ${money(b.avail)}` }[b.status];
+    const col = b.status === 'over' ? cm.colorBad || 'var(--red)' : ['saved', 'ok', 'zero'].includes(b.status) ? cm.colorGood || 'var(--green)' : b.status === 'pending' ? 'var(--orange)' : 'var(--text-3)';
+    html = `<div class="budget-line"><span class="pill" style="background:${col}"></span><span>${esc(cm.name)}: orçamento ${money(b.avail)}${b.avail !== b.limit ? ` (base ${money(b.limit)})` : ''} · gasto ${money(b.spent)}${b.pending ? ` · pendente ${money(b.pending)}` : ''} · ${res}</span></div>` + html;
   }
   $('#dayBody').innerHTML = html;
 
@@ -564,6 +638,7 @@ function renderDay(date) {
 
 function openDay(date) {
   S.selected = date;
+  S.dayChosen = true;
   if (S.checking && S.checking !== date) S.checking = null;
   renderDay(date);
   if (isWide()) setDock(true);
@@ -635,8 +710,29 @@ async function runAction(act, it) {
       return;
     }
     case 'unpay': {
+      if (isInc) {
+        // o dinheiro (ou parte da distribuição) já foi usado? então não desfaz de forma simples
+        const chk = F.undoReceiptCheck(it.key, { data: S.data, accounts: accountsList(true), piggies: [...S.piggies.values()], today: today() });
+        if (!chk.ok) {
+          const lines = chk.problems.map(p => p.kind === 'piggy'
+            ? `Cofrinho ${esc((S.piggies.get(p.id) || {}).name || '')}: ${money(p.missing)} já foram retirados`
+            : `${esc(accName(p.id))}: ${money(p.missing)} já foram usados`).join('<br>');
+          const res = await dialog({
+            title: 'Esse dinheiro já foi usado',
+            html: `<p>Desfazer o recebimento deixaria saldos negativos artificialmente:</p><p>${lines}</p>
+              <p class="small">Opção segura: lançar um <b>estorno</b> com a data de hoje. O recebimento, a distribuição e as retiradas continuam no histórico.</p>`,
+            actions: [{ label: 'Cancelar', value: null }, { label: 'Lançar estorno', value: 'refund', cls: 'primary' }],
+          });
+          if (res !== 'refund') return;
+          const id = uid(), d = today(), now = nowISO(), k = occKey(id, d);
+          const ch = ops.newChanges();
+          ch.entries.set(id, { id, kind: 'expense', title: `Estorno de ${itemTitle(it)}`, amount: it.amount, tagId: null, accountId: it.accountId, refundOf: it.key, rule: { type: 'once', start: d }, segments: [], createdAt: now, updatedAt: now });
+          ch.overrides.set(k, { key: k, entryId: id, orig: d, status: 'paid', paidAt: now, updatedAt: now });
+          return commit('Estorno lançado', ch);
+        }
+      }
       const ch = ops.planStatus([it], null, S.data);
-      ops.setOv(ch, S.data, it, { paidAmount: undefined });
+      ops.setOv(ch, S.data, it, { paidAmount: undefined, distPending: undefined });
       if (isInc) ops.planUndistribute(it.key, S.data, ch);
       return commit(isInc ? 'Recebimento desfeito' : 'Pagamento desfeito', ch);
     }
@@ -711,24 +807,38 @@ async function guardSpendMany(list) {
 }
 
 /** Após receber: aplica as regras de distribuição da conta (automático ou com confirmação). */
-async function afterPaid(items) {
+async function afterPaid(items, { force = false } = {}) {
   for (const it0 of items) {
     if (it0.kind !== 'income') continue;
     const it = findItem(it0.key, it0.date) || it0;
     if (it.status !== 'paid' || S.data.entries.some(e => e.distOf === it.key)) continue;
     const rule = F.ruleFor(S.accounts.get(it.accountId), it.origin);
     if (!rule || !(rule.steps || []).length) continue;
+    // só destinos que ainda existem (nunca envia para conta/cofrinho excluído ou arquivado)
+    const exists = t => { const [k, id] = String(t).split(':'); return k === 'piggy' ? !!S.piggies.get(id) && !S.piggies.get(id).archived : !!S.accounts.get(id) && !S.accounts.get(id).archived; };
+    const live = { ...rule, steps: rule.steps.filter(st => exists(st.target)) };
     const b = F.balances({ data: S.data, accounts: accountsList(true), piggies: [...S.piggies.values()], today: today(), planUpto: today() });
-    const outs = F.distribute(it.amount, rule, { piggies: [...S.piggies.values()], piggySaved: id => (b.piggies.get(id) || {}).saved || 0 });
+    const outs = F.distribute(it.amount, live, { piggies: [...S.piggies.values()], piggySaved: id => (b.piggies.get(id) || {}).saved || 0 });
     if (!outs.length) continue;
     const name = t => { const [k, id] = t.split(':'); return k === 'piggy' ? (S.piggies.get(id) || {}).name : accName(id); };
-    if (!rule.auto) {
-      const ok = await confirmDlg(`Distribuir ${money(it.amount)}?`, outs.map(o => `${esc(name(o.target))}: ${money(o.amount)}`).join('<br>'), 'Distribuir');
-      if (!ok) continue;
+    if (!rule.auto || force) {
+      const res = await dialog({
+        title: `Distribuir ${money(it.amount)}?`,
+        html: `<p>${outs.map(o => `${esc(name(o.target))}: ${money(o.amount)}`).join('<br>')}</p><p class="small">Se deixar para depois, fica em Contas › ${esc(accName(it.accountId))} › Distribuições pendentes.</p>`,
+        actions: [{ label: 'Depois', value: 'later' }, { label: 'Distribuir', value: 'go', cls: 'primary' }],
+      });
+      if (res !== 'go') {
+        if (!it.distPending) await commit('Distribuição deixada para depois', ops.setOv(ops.newChanges(), S.data, it, { distPending: true }), { silent: true });
+        continue;
+      }
     }
-    await commit(rule.auto ? 'Distribuição automática aplicada' : 'Receita distribuída', ops.planDistribution(it, outs, { piggies: [...S.piggies.values()], uid, title: `Distribuição de ${itemTitle(it)}` }));
+    const ch = ops.planDistribution(it, outs, { piggies: [...S.piggies.values()], uid, title: `Distribuição de ${itemTitle(it)}` });
+    ops.setOv(ch, S.data, it, { distPending: undefined });
+    await commit(rule.auto && !force ? 'Distribuição automática aplicada' : 'Receita distribuída', ch);
   }
 }
+/** Executa uma distribuição que ficou pendente (chamado pela tela da conta). */
+async function distributeNow(key, date) { const it = findItem(key, date); if (it) await afterPaid([it], { force: true }); }
 
 /** Adiar (com opção de alterar o valor): um ou vários lançamentos. */
 async function moveFlow(items) {
@@ -1081,7 +1191,7 @@ function exitSelect(fromPop = false) {
 }
 function selectedItems() {
   const out = [];
-  for (const d of [...S.picked].sort()) for (const it of dayData(d).items) if (it.status !== 'moved') out.push(it);
+  for (const d of [...S.picked].sort()) for (const it of dayData(d).items) if (it.status !== 'moved' && accVisible(it)) out.push(it);
   return out;
 }
 function updateSelUI() {
@@ -1545,7 +1655,7 @@ function bind() {
     const id = e.target.dataset.acc; if (!id) return;
     const set = new Set(S.settings.hiddenAccounts);
     e.target.checked ? set.delete(id) : set.add(id);
-    S.settings.hiddenAccounts = [...set]; saveSettings(); refresh();
+    S.settings.hiddenAccounts = [...set]; saveSettings(); refresh(); renderHeader();
   });
   $('#panelCfg').addEventListener('change', e => { const k = e.target.dataset.panel; if (!k) return; S.settings.panels = { ...S.settings.panels, [k]: e.target.checked }; saveSettings(); refreshDerived(); });
   $('#alertCfg').addEventListener('change', e => { const k = e.target.dataset.alert; if (!k) return; S.settings.alerts = { ...S.settings.alerts, [k]: e.target.checked }; saveSettings(); refreshDerived(); });
@@ -1638,7 +1748,7 @@ function ctx() {
     dialog, confirmDlg, closeTop, closeAll, openLayer, isOpen, toast, refresh, rebuild, saveSettings, commit, undoLast,
     ops, F, db, tag, tagColor, tagsSorted, accountsList, accName, itemTitle, itemColor, itemSign, amtCls, statusLabel,
     budgetCtx, openForm, openDay: d => { S.view = parse(d); renderHeader(); renderGrid(); openDay(d); }, renderHeader, renderGrid,
-    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE,
+    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, accVisible, filtering,
   };
 }
 
