@@ -550,3 +550,13 @@ body.cal-exp .cell .tags { display: none; }
 /* o botão + não cobre o valor do saldo */
 body.cal-exp .summary-line { padding-right: 78px; }
 @media (min-width: 900px) { .summary-line { padding-right: 96px; } }
+
+/* menu lateral enxuto + engrenagem (como no Samsung Calendar) */
+.drawer-head { padding: 10px 8px 6px 18px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.drawer-head .gear svg { width: 22px; height: 22px; color: var(--text-2); }
+.settings-body { padding-top: 4px; }
+#settingsSheet { z-index: 42; }
+@media (min-width: 900px) { #settingsSheet { width: min(560px, 92vw) !important; } }
+.nav .row > .ic { flex: none; }
+.nav .row > span:not(.ic) { text-align: left; }
+.nav .row { justify-content: flex-start; }

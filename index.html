@@ -48,7 +48,7 @@
 
   <!-- Menu lateral -->
   <aside class="drawer" id="drawer" aria-hidden="true">
-    <div class="drawer-head"><span>Exibição</span><button class="icon-btn" data-close aria-label="Fechar" data-icon="close"></button></div>
+    <div class="drawer-head"><span></span><button class="icon-btn gear" id="btnSettings" aria-label="Configurações" data-icon="gear"></button></div>
     <div class="drawer-body">
       <div class="group nav">
         <button class="row" data-page="accounts"><span class="ic" data-icon="wallet"></span><span>Contas</span><b id="navBalance" class="muted"></b></button>
@@ -70,6 +70,13 @@
         <div class="group" id="accFilter"></div>
         <div class="group"><label class="row"><span>Mostrar transferências e cofrinhos</span><input type="checkbox" class="switch" data-setting="showTransfers"></label></div>
       </div>
+    </div>
+  </aside>
+
+  <!-- Configurações (engrenagem do menu) -->
+  <section class="sheet tall stack" id="settingsSheet" aria-hidden="true">
+    <div class="sheet-head"><button class="icon-btn" data-close aria-label="Voltar" data-icon="left"></button><div class="grow sheet-title sm">Configurações</div></div>
+    <div class="sheet-body settings-body">
       <div class="group-title">Tags <button class="link-btn" id="btnNewTag">Nova</button></div>
       <div class="group" id="tagList"></div>
 
@@ -115,7 +122,7 @@
       </details>
       <p class="hint center" id="appVersion"></p>
     </div>
-  </aside>
+  </section>
 
   <!-- Detalhes do dia -->
   <section class="sheet" id="daySheet" aria-hidden="true">

@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.3.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -367,7 +367,9 @@ function renderGrid(anim) {
 /** Lançamentos escritos dentro do dia (modo expandido/PC). Respeita filtros; não altera nada. */
 function dayLines(day, max) {
   const s = S.settings, hidden = new Set(s.hiddenTags);
+  if (!s.showTags) return ''; // tags desligadas: os lançamentos somem da grade (continuam nos cálculos)
   const list = day.items.filter(it => countsPlanned(it) &&
+    !(it.tagId && hidden.has(it.tagId)) && !(it.splits && it.splits.every(p => hidden.has(p.tagId))) &&
     ((it.kind === 'income' && s.showIncome) || (it.kind === 'expense' && s.showExpense) ||
      (isInternal(it) && s.showTransfers && it.kind === 'transfer')));
   if (!list.length) return '';
@@ -472,14 +474,20 @@ function statusLabel(it) {
 const KIND_NAME = { income: 'Receita', expense: 'Despesa', transfer: 'Transferência', reserve: 'Guardado no cofrinho', release: 'Retirado do cofrinho' };
 function itemTitle(it) {
   if (it.title) return it.title;
-  if (tag(it.tagId)) return tag(it.tagId).name;
+  if (visibleTag(it.tagId)) return tag(it.tagId).name;
   if (it.kind === 'reserve') return 'Guardado';
   if (it.kind === 'release') return 'Retirado';
   return KIND_NAME[it.kind];
 }
+/** Tag visível = chave "Tags" ligada e essa tag não escondida. Esconder muda só a exibição. */
+function visibleTag(id) {
+  if (!S.settings.showTags || !id) return null;
+  if ((S.settings.hiddenTags || []).includes(id)) return null;
+  return tag(id);
+}
 function itemColor(it) {
   if (it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release') return 'var(--accent)';
-  const t = tag(it.tagId);
+  const t = visibleTag(it.tagId);
   return t ? tagColor(t) : it.kind === 'income' ? 'var(--green)' : 'var(--red)';
 }
 const isInternal = it => it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release';
@@ -499,7 +507,7 @@ function itemRow(it, { quick = false } = {}) {
   else if (it.kind === 'reserve' || it.kind === 'release') parts.push(`${it.kind === 'reserve' ? 'para' : 'de'} ${esc((S.piggies.get(it.piggyId) || {}).name || 'cofrinho')}`);
   else if (multiAcc()) parts.push(esc(accName(it.accountId)));
   if (it.splits) parts.push(`dividido em ${it.splits.length}`);
-  else if (tg && tg.name !== it.title) parts.push(esc(tg.name));
+  else if (visibleTag(it.tagId) && tg.name !== it.title) parts.push(esc(tg.name));
   if (it.status === 'moved') parts.push(`para ${dm(it.movedTo)}`);
   else if (it.moved) parts.push(`de ${dm(it.baseDate)}`);
   if (it.status !== 'planned') parts.push(`<span class="st st-${it.status}">${statusLabel(it)}</span>`);
@@ -576,7 +584,7 @@ function openActions(key, date) {
     : it.kind === 'income' ? `Entra em ${esc(accName(it.accountId))}${it.origin ? ` · origem ${esc(it.origin)}` : ''}`
     : it.kind === 'expense' ? `Sai de ${esc(accName(it.accountId))}` : esc(accName(it.accountId));
   const splits = it.splits ? it.splits.map(p => `${esc((tag(p.tagId) || {}).name || 'Sem tag')} ${money(p.amount)}`).join(' + ') : null;
-  const sub = [where, splits || (tg && tg.name !== it.title ? esc(tg.name) : null), it.recurring ? RULES[e.rule.type] : null, statusLabel(it)].filter(Boolean).join(' · ');
+  const sub = [where, splits || (visibleTag(it.tagId) && tg.name !== it.title ? esc(tg.name) : null), it.recurring ? RULES[e.rule.type] : null, statusLabel(it)].filter(Boolean).join(' · ');
   let acts = '';
   if (it.status === 'moved') {
     acts = ACT('unmove', 'Desfazer adiamento', 'undo') + ACT('goto', `Ver ${dm(it.movedTo)}`, 'calendar');
@@ -1311,6 +1319,8 @@ async function wipeAll() {
 
 // ---------- Eventos ----------
 function bind() {
+  // engrenagem do menu: abre as Configurações (tags, calendário, painéis, alertas, feriados, dados)
+  $('#btnSettings').onclick = async () => { await closeAll(); syncDrawer(); storageInfo(); openLayer($('#settingsSheet')); };
   $('#btnMenu').onclick = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
   $('#btnPrev').onclick = () => goMonth(-1);
   $('#btnNext').onclick = () => goMonth(1);
