@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="color-scheme" content="dark">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Calendário Financeiro</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="bar-normal">
+      <button class="icon-btn" id="btnMenu" aria-label="Menu" data-icon="dots"></button>
+      <button class="month-title" id="btnToday" aria-label="Voltar para hoje"><span id="monthName"></span><span id="yearName"></span></button>
+      <button class="icon-btn" id="btnPrev" aria-label="Mês anterior" data-icon="left"></button>
+      <button class="icon-btn" id="btnNext" aria-label="Próximo mês" data-icon="right"></button>
+    </div>
+    <div class="bar-select">
+      <button class="icon-btn" id="btnSelClose" aria-label="Sair da seleção" data-icon="close"></button>
+      <span class="sel-title" id="selTitle">Selecione os dias</span>
+      <button class="text-btn" id="btnSelWeek">Semana</button>
+      <button class="text-btn" id="btnSelMonth">Mês</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="weekdays" id="weekdays"></div>
+    <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
+    <button class="summary" id="summary" aria-expanded="false">
+      <span class="summary-line"><span id="summaryLabel"></span><b id="summaryValue"></b></span>
+      <span class="summary-body" id="summaryBody"></span>
+    </button>
+  </main>
+
+  <button class="fab" id="fab" aria-label="Novo lançamento" data-icon="plus"></button>
+  <div class="sel-bar" id="selBar"><button class="primary-btn" id="btnSelGo" disabled>Continuar</button></div>
+
+  <div class="scrim" id="scrim"></div>
+
+  <!-- Menu lateral -->
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head"><span>Exibição</span><button class="icon-btn" data-close aria-label="Fechar" data-icon="close"></button></div>
+    <div class="drawer-body">
+      <div class="group">
+        <label class="row"><span class="dot inc"></span><span>Receitas</span><input type="checkbox" class="switch" data-setting="showIncome"></label>
+        <label class="row"><span class="dot exp"></span><span>Despesas</span><input type="checkbox" class="switch" data-setting="showExpense"></label>
+        <label class="row"><span class="dot tag"></span><span>Tags</span><input type="checkbox" class="switch" data-setting="showTags"></label>
+      </div>
+      <div class="segmented" id="basisSeg"><button data-basis="planned">Previsto</button><button data-basis="realized">Realizado</button></div>
+
+      <div class="group-title">Tags <button class="link-btn" id="btnNewTag">Nova</button></div>
+      <div class="group" id="tagList"></div>
+
+      <details class="more">
+        <summary>Calendário e saldo</summary>
+        <div class="group">
+          <label class="row"><span>Mostrar movimento do dia</span><input type="checkbox" class="switch" data-setting="showMovement"></label>
+          <label class="row"><span>Semana começa na segunda</span><input type="checkbox" class="switch" data-setting="mondayFirst"></label>
+          <label class="row"><span>Acumular meses anteriores</span><input type="checkbox" class="switch" data-setting="carry"></label>
+          <label class="row field carry-only"><span>Saldo inicial</span><input type="text" inputmode="decimal" id="initialBalance" placeholder="0,00"></label>
+          <label class="row field carry-only"><span>A partir de</span><input type="date" id="startDate"></label>
+        </div>
+      </details>
+      <details class="more">
+        <summary>Feriados</summary>
+        <div class="group">
+          <label class="row field"><span>Estado</span><select id="holState"></select></label>
+          <label class="row field"><span>Município</span><select id="holCity"></select></label>
+          <label class="row"><span>Pontos facultativos</span><input type="checkbox" class="switch" data-setting="holOptional"></label>
+        </div>
+        <div class="group" id="customHolList"></div>
+        <button class="link-btn pad" id="btnAddHoliday">Adicionar feriado</button>
+      </details>
+      <details class="more">
+        <summary>Dados</summary>
+        <div class="group">
+          <button class="row action" id="btnSample">Carregar exemplo</button>
+          <button class="row action danger" id="btnWipe">Apagar todos os dados</button>
+        </div>
+        <p class="hint" id="storageInfo"></p>
+      </details>
+      <p class="hint center" id="appVersion"></p>
+    </div>
+  </aside>
+
+  <!-- Detalhes do dia -->
+  <section class="sheet" id="daySheet" aria-hidden="true">
+    <div class="grabber"></div>
+    <div class="sheet-head">
+      <div class="grow"><div class="sheet-title" id="dayTitle"></div><div class="sheet-sub" id="daySub"></div></div>
+      <button class="icon-btn soft" id="btnDaySelect" aria-label="Selecionar vários" data-icon="select"></button>
+      <button class="icon-btn soft" id="btnDayAdd" aria-label="Adicionar" data-icon="plus"></button>
+    </div>
+    <div class="sheet-body" id="dayBody"></div>
+    <div class="sheet-foot" id="dayFoot"></div>
+  </section>
+
+  <!-- Ações de um lançamento -->
+  <section class="sheet" id="actionSheet" aria-hidden="true">
+    <div class="grabber"></div>
+    <div class="sheet-body" id="actionBody"></div>
+  </section>
+
+  <!-- Alcance da alteração -->
+  <section class="sheet" id="scopeSheet" aria-hidden="true">
+    <div class="grabber"></div>
+    <div class="sheet-head"><div class="grow"><div class="sheet-title sm" id="scopeTitle"></div><div class="sheet-sub" id="scopeSub"></div></div></div>
+    <div class="sheet-body" id="scopeBody"></div>
+  </section>
+
+  <!-- Edição em grupo -->
+  <section class="sheet" id="groupSheet" aria-hidden="true">
+    <div class="grabber"></div>
+    <div class="sheet-head"><div class="grow"><div class="sheet-title sm" id="groupTitle"></div><div class="sheet-sub" id="groupSub"></div></div></div>
+    <div class="sheet-body" id="groupBody"></div>
+    <div class="sheet-foot actions-row" id="groupActions"></div>
+  </section>
+
+  <!-- Formulário -->
+  <section class="sheet tall" id="formSheet" aria-hidden="true">
+    <form id="entryForm" novalidate>
+      <div class="sheet-head">
+        <button type="button" class="text-btn" data-close>Cancelar</button>
+        <div class="sheet-title sm center grow" id="formTitle"></div>
+        <button type="submit" class="text-btn strong">Salvar</button>
+      </div>
+      <div class="sheet-body">
+        <div class="segmented kind" id="kindSeg"><button type="button" data-kind="expense">Despesa</button><button type="button" data-kind="income">Receita</button></div>
+        <div class="amount-wrap"><span>R$</span><input id="fAmount" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>
+        <div class="group">
+          <label class="row field"><span>Descrição</span><input id="fTitle" type="text" placeholder="Opcional" maxlength="60"></label>
+          <label class="row field"><span>Tag</span><select id="fTag"></select></label>
+          <label class="row field"><span id="fDateLabel">Data</span><input id="fDate" type="date"></label>
+          <label class="row" id="fPaidRow"><span id="fPaidLabel">Pago</span><input id="fPaid" type="checkbox" class="switch"></label>
+        </div>
+
+        <button type="button" class="row-link" id="fRuleToggle"><span>Repetição</span><span class="muted" id="fRuleSummary"></span><span class="chev" data-icon="right"></span></button>
+        <div class="group rule-box" id="fRuleBox">
+          <label class="row field"><span>Repetir</span><select id="fRule"></select></label>
+          <div class="rule-opt" data-for="monthlyDay"><label class="row field"><span>Dia do mês</span><input id="fDay" type="number" min="1" max="31"></label></div>
+          <div class="rule-opt" data-for="nthBusinessDay">
+            <label class="row field"><span>Qual dia útil</span><select id="fNth"></select></label>
+            <label class="row"><span>Contar sábado</span><input id="fSat" type="checkbox" class="switch"></label>
+          </div>
+          <div class="rule-opt" data-for="weekly">
+            <div class="row"><div class="chips" id="fWeekdays"></div></div>
+            <label class="row field"><span>Frequência</span><select id="fEvery"><option value="1">Toda semana</option><option value="2">Quinzenal</option><option value="3">A cada 3 semanas</option><option value="4">A cada 4 semanas</option></select></label>
+          </div>
+          <div class="rule-opt" data-for="interval"><label class="row field"><span>A cada (dias)</span><input id="fInterval" type="number" min="1"></label></div>
+          <div class="rule-opt" data-for="dates"><div class="row col"><div class="chips" id="fDates"></div><input id="fDateAdd" type="date" aria-label="Adicionar data"></div></div>
+          <div class="rule-opt" data-for="recurring">
+            <label class="row"><span>Sem data final</span><input id="fNoEnd" type="checkbox" class="switch"></label>
+            <label class="row field" id="fEndRow"><span>Termina em</span><input id="fEnd" type="date"></label>
+          </div>
+          <div class="rule-opt" data-for="policy">
+            <label class="row field"><span>Em feriado</span><select id="fPolicy"><option value="keep">Manter</option><option value="skip">Ignorar</option><option value="next">Próximo dia útil</option><option value="prev">Dia útil anterior</option></select></label>
+            <label class="row"><span>Também em fins de semana</span><input id="fPolicyWk" type="checkbox" class="switch"></label>
+          </div>
+        </div>
+        <p class="hint" id="fMeta"></p>
+        <button type="button" class="danger-btn" id="btnDelete">Excluir</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="dialog" id="dialog" aria-hidden="true">
+    <div class="dialog-card"><div class="dialog-title" id="dlgTitle"></div><div class="dialog-body" id="dlgBody"></div><div class="dialog-actions" id="dlgActions"></div></div>
+  </div>
+
+  <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo">Desfazer</button></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
