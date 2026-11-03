@@ -33,6 +33,7 @@
   <main>
     <div class="weekdays" id="weekdays"></div>
     <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
+    <div class="cal-handle" id="calHandle" role="button" tabindex="0" aria-label="Expandir ou recolher o calendário"><i></i></div>
     <button class="summary" id="summary" aria-expanded="false">
       <span class="summary-line"><span id="summaryLabel"></span><b id="summaryValue"></b></span>
       <span class="summary-body" id="summaryBody"></span>
@@ -123,6 +124,7 @@
       <div class="grow"><div class="sheet-title" id="dayTitle"></div><div class="sheet-sub" id="daySub"></div></div>
       <button class="icon-btn soft" id="btnDaySelect" aria-label="Selecionar vários" data-icon="select"></button>
       <button class="icon-btn soft" id="btnDayAdd" aria-label="Adicionar" data-icon="plus"></button>
+      <button class="icon-btn soft" id="btnDayClose" aria-label="Fechar" data-icon="close"></button>
     </div>
     <div class="sheet-body" id="dayBody"></div>
     <div class="sheet-foot" id="dayFoot"></div>

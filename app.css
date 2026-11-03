@@ -473,3 +473,80 @@ b.warn { color: var(--orange); }
 .cell .num { flex: none; }
 details.more[open] > summary::after { transform: rotate(45deg) translate(-2px, -2px); }
 @media (max-height: 520px) { .cell .num { width: 26px; height: 26px; font-size: 14px; } }
+
+/* =================== v1.3 — calendário expansível e grade com linhas =================== */
+/* linhas finas entre os dias, como um calendário de papel */
+.grid { border-top: 1px solid var(--line); gap: 0; }
+.cell {
+  height: var(--cell-h, 64px); border-top: 0; border-radius: 0 !important;
+  border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+  padding: 4px 2px 5px; transition: height .26s var(--ease), background .15s;
+}
+.cell:nth-child(7n) { border-right: 0; }
+.cell.sel, .cell.sel + .cell, .cell.picked + .cell { border-top-color: transparent; }
+.cell.sel { background: var(--s2); }
+.cell.picked { background: var(--accent-soft); }
+.cell:active { background: var(--s1); }
+body.cal-dragging .cell { transition: none; }
+.weekdays div { padding-bottom: 6px; }
+
+/* lançamentos escritos dentro do dia (aparecem ao expandir; no PC sempre) */
+.cell .lns { display: none; flex-direction: column; gap: 1px; width: 100%; margin-top: 3px; overflow: hidden; min-height: 0; }
+body.cal-exp .cell .lns { display: flex; }
+.cell .ln { display: flex; align-items: center; gap: 3px; height: 14px; font-size: 9.5px; line-height: 14px; color: var(--text-2); min-width: 0; padding: 0 1px; }
+.cell .ln i { width: 2px; height: 10px; border-radius: 1px; flex: none; }
+.cell .ln b { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.cell .ln em { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; flex: none; display: none; }
+.cell .ln.done b { color: var(--text-3); }
+.cell .ln.more { color: var(--text-3); font-weight: 600; padding-left: 5px; }
+.cell .val { margin-top: auto; }
+
+/* alça de expansão */
+.cal-handle { display: flex; justify-content: center; align-items: center; height: 22px; cursor: pointer; touch-action: none; }
+.cal-handle i { width: 36px; height: 4px; border-radius: 2px; background: var(--s3); transition: background .2s, width .2s; }
+.cal-handle:active i, .cal-handle:hover i { background: var(--text-3); width: 44px; }
+.summary { margin-top: 0; }
+
+/* telas um pouco mais largas: mostra o valor de cada lançamento na linha */
+@media (min-width: 600px) { .cell .ln em { display: block; } .cell .ln { font-size: 10.5px; } }
+
+@media (max-height: 520px) { .cell { height: var(--cell-h, 46px); } }
+
+/* ----- PC: calendário ocupa toda a área útil; painel do dia só quando aberto ----- */
+@media (min-width: 900px) {
+  .topbar, main { margin-right: 0; transition: margin-right .22s var(--ease); }
+  body.day-open .topbar, body.day-open main { margin-right: var(--dock); }
+  .bar-normal, .bar-select { max-width: none; }
+  .weekdays, .grid-wrap, .summary, #panels { max-width: none; }
+  main { padding: 0 20px 24px; }
+  .topbar { padding: 10px 20px 2px; }
+  .cal-handle { display: none; }
+  .grid { border-left: 1px solid var(--line); border-right: 1px solid var(--line); border-radius: 0; }
+  .cell { padding: 6px 6px 8px; align-items: stretch; }
+  .cell:nth-child(7n) { border-right: 0; }
+  .cell .num { align-self: flex-start; font-size: 14px; width: 28px; height: 28px; }
+  .cell .ln { height: 18px; font-size: 12.5px; gap: 6px; }
+  .cell .ln i { width: 3px; height: 13px; }
+  .cell .ln em { display: block; }
+  .cell .val { align-self: flex-end; font-size: 13.5px; }
+  .cell .bud { align-self: flex-start; margin-left: 6px; }
+  .cell .flag { right: 8px; top: 9px; }
+  .fab { right: 28px; bottom: 28px; }
+  body.day-open .fab { right: calc(var(--dock) + 28px); }
+  .toast { right: 120px; }
+  body.day-open .toast { right: calc(var(--dock) + 120px); }
+  .sel-bar { right: 0; }
+  body.day-open .sel-bar { right: var(--dock); }
+  #daySheet.docked { transform: translateX(100%); transition: transform .22s var(--ease); }
+  #daySheet.docked.on { transform: none; }
+  .summary-line { padding: 10px 4px; }
+}
+.cell .ln em { display: block; font-size: 9px; color: var(--text-2); }
+.cell .ln em.pos { color: var(--green); } .cell .ln em.neg { color: var(--red); }
+body.cal-exp .cell .tags { display: none; }
+/* colunas sempre iguais, mesmo com textos longos dentro dos dias */
+.weekdays, .grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.cell { min-width: 0; }
+/* o botão + não cobre o valor do saldo */
+body.cal-exp .summary-line { padding-right: 78px; }
+@media (min-width: 900px) { .summary-line { padding-right: 96px; } }

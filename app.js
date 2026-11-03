@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -48,7 +48,7 @@ const DEFAULTS = {
   showTransfers: true, hiddenAccounts: [], defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
-  summaryOpen: false,
+  summaryOpen: false, calExpanded: false,
 };
 const S = {
   entries: new Map(), overrides: new Map(), checks: new Map(), tags: new Map(),
@@ -180,21 +180,62 @@ const isOpen = el => layers.some(l => l.el === el);
 // ---------- Tela larga (PC/tablet): detalhes do dia ficam fixos à direita ----------
 const wideMQ = window.matchMedia('(min-width: 900px)');
 const isWide = () => wideMQ.matches;
-const dayVisible = () => isWide() || isOpen($('#daySheet'));
+const dayVisible = () => (isWide() ? !!S.dayOpen : isOpen($('#daySheet')));
 function applyLayout() {
   document.body.classList.toggle('wide', isWide());
   const ds = $('#daySheet');
   if (isWide()) {
-    if (isOpen(ds)) { const i = layers.findIndex(l => l.el === ds); if (i >= 0) layers.splice(i, 1); updateScrim(); }
-    ds.classList.add('on', 'docked'); ds.setAttribute('aria-hidden', 'false');
-    if (S.view && S.calc) renderDay(S.selected || today());
+    if (isOpen(ds)) { const i = layers.findIndex(l => l.el === ds); if (i >= 0) layers.splice(i, 1); updateScrim(); S.dayOpen = true; }
+    ds.classList.add('docked');
+    setDock(!!S.dayOpen);
   } else {
     ds.classList.remove('docked');
+    document.body.classList.remove('day-open');
     if (!isOpen(ds)) { ds.classList.remove('on'); ds.setAttribute('aria-hidden', 'true'); }
   }
   if (S.calc) renderGrid();
 }
+/** PC: painel do dia à direita, aberto só quando o usuário escolhe uma data. */
+function setDock(open) {
+  S.dayOpen = open;
+  const ds = $('#daySheet');
+  ds.classList.toggle('on', open);
+  ds.setAttribute('aria-hidden', String(!open));
+  document.body.classList.toggle('day-open', open);
+  if (open && S.calc) renderDay(S.selected || today());
+}
 wideMQ.addEventListener('change', applyLayout);
+
+// ---------- Altura das células: compacta x expandida (só visualização) ----------
+const CAL = { rows: 6, compact: 64, expanded: 140, lines: 0 };
+const isExpanded = () => isWide() || !!S.settings.calExpanded;
+function measureCal() {
+  const grid = $('#grid'); if (!grid) return;
+  const vh = window.innerHeight;
+  const top = grid.getBoundingClientRect().top + window.scrollY;
+  const reserve = isWide() ? 64 : 92; // alça + linha de saldo + respiro
+  const fill = Math.floor((vh - top - reserve) / CAL.rows);
+  CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
+  CAL.expanded = Math.max(CAL.compact + 24, fill);
+  // quantas linhas de lançamento cabem no dia expandido (o conteúdo é montado uma vez só)
+  const lineH = isWide() ? 18 : 15;
+  CAL.lines = Math.max(1, Math.floor((CAL.expanded - (isWide() ? 64 : 50)) / lineH));
+  applyCellHeight(isExpanded() ? CAL.expanded : CAL.compact);
+}
+function applyCellHeight(h) {
+  $('#grid').style.setProperty('--cell-h', h + 'px');
+  // as linhas aparecem quando a célula já ganhou espaço suficiente
+  document.body.classList.toggle('cal-exp', h > CAL.compact + 14);
+}
+function setExpanded(open) {
+  S.settings.calExpanded = !!open;
+  saveSettings();
+  applyCellHeight(isExpanded() ? CAL.expanded : CAL.compact);
+  $('#calHandle').classList.toggle('up', isExpanded());
+  $('#calHandle').setAttribute('aria-label', isExpanded() ? 'Recolher o calendário' : 'Expandir o calendário');
+  if (S.calc) renderGrid();
+}
+window.addEventListener('resize', () => { clearTimeout(measureCal.t); measureCal.t = setTimeout(() => { measureCal(); if (S.calc) renderGrid(); }, 120); });
 
 function toast(msg, undo, label = 'Desfazer') {
   $('#toastMsg').textContent = msg;
@@ -274,7 +315,9 @@ function renderGrid(anim) {
   const first = iso(y, m, 1);
   const lead = (weekday(first) - (s.mondayFirst ? 1 : 0) + 7) % 7;
   const total = Math.ceil((lead + month.days.length) / 7) * 7;
+  if (CAL.rows !== total / 7) { CAL.rows = total / 7; measureCal(); }
   const hidden = new Set(s.hiddenTags);
+  const maxLines = CAL.lines;
   const start = addDays(first, -lead);
   const cm = calendarMeta();
   const bud = cm ? F.dailyBudget(cm, first, iso(y, m, month.days.length), budgetCtx()) : null;
@@ -294,6 +337,7 @@ function renderGrid(anim) {
     const day = month.days[n - 1];
     let inner = `<span class="num">${n}</span>`;
     if (day.items.some(it => it.status === 'pending')) inner += '<span class="flag"></span>';
+    if (maxLines) inner += dayLines(day, maxLines);
     if (s.showTags) {
       const colors = new Map();
       for (const it of day.items) {
@@ -318,6 +362,29 @@ function renderGrid(anim) {
   grid.innerHTML = html;
   if (anim) { grid.classList.remove('anim-l', 'anim-r'); void grid.offsetWidth; grid.classList.add(anim); }
   renderSummary();
+}
+
+/** Lançamentos escritos dentro do dia (modo expandido/PC). Respeita filtros; não altera nada. */
+function dayLines(day, max) {
+  const s = S.settings, hidden = new Set(s.hiddenTags);
+  const list = day.items.filter(it => countsPlanned(it) &&
+    ((it.kind === 'income' && s.showIncome) || (it.kind === 'expense' && s.showExpense) ||
+     (isInternal(it) && s.showTransfers && it.kind === 'transfer')));
+  if (!list.length) return '';
+  const order = { income: 0, transfer: 1, expense: 2 };
+  list.sort((a, b) => (order[a.kind] - order[b.kind]) || (b.amount - a.amount));
+  // com espaço para uma linha só, mostra o primeiro lançamento (sem trocar por "+n")
+  const show = list.length > max ? list.slice(0, max >= 2 ? max - 1 : 1) : list;
+  const rest = list.length - show.length;
+  const line = it => {
+    const tg = tag(it.tagId);
+    const visTag = s.showTags && tg && !hidden.has(tg.id);
+    const color = visTag ? tagColor(tg) : it.kind === 'income' ? 'var(--green)' : it.kind === 'expense' ? 'var(--red)' : 'var(--accent)';
+    const name = it.title || (visTag ? tg.name : KIND_NAME[it.kind]);
+    const sg = itemSign(it);
+    return `<span class="ln${it.status === 'paid' ? ' done' : ''}"><i style="background:${color}"></i><b>${esc(name)}</b><em class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
+  };
+  return `<span class="lns">${show.map(line).join('')}${rest ? `<span class="ln more">+${rest}</span>` : ''}</span>`;
 }
 
 function renderSummary() {
@@ -491,7 +558,8 @@ function openDay(date) {
   S.selected = date;
   if (S.checking && S.checking !== date) S.checking = null;
   renderDay(date);
-  if (!isWide() && !isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; renderGrid(); });
+  if (isWide()) setDock(true);
+  else if (!isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; renderGrid(); });
   renderGrid();
 }
 
@@ -1266,20 +1334,64 @@ function bind() {
     clearTimeout(lp);
     if (c) lp = setTimeout(() => { swiped = true; navigator.vibrate && navigator.vibrate(12); enterSelect(c.dataset.date); }, 480);
   }, { passive: true });
+  // Arrastar o calendário para baixo expande; para cima recolhe (como no Samsung Calendar).
+  // Muda apenas a altura das células — nenhum filtro, lançamento ou cálculo é alterado.
+  let vdrag = null;
+  const startH = () => (S.settings.calExpanded ? CAL.expanded : CAL.compact);
+  const dragTo = dy => {
+    const h = Math.max(CAL.compact, Math.min(CAL.expanded, vdrag.h0 + dy / 1.0 / Math.max(1, CAL.rows) * 1.6));
+    vdrag.h = h; applyCellHeight(h);
+  };
+  const finishDrag = (dy, dt) => {
+    if (!vdrag) return;
+    const speed = (dy || 0) / Math.max(1, dt);
+    const mid = (CAL.compact + CAL.expanded) / 2;
+    const open = Math.abs(speed) > 0.5 ? speed > 0 : vdrag.h > mid;
+    document.body.classList.remove('cal-dragging');
+    vdrag = null;
+    setExpanded(open);
+    setTimeout(() => { swiped = false; }, 400); // o próximo toque num dia volta a funcionar normalmente
+  };
   wrap.addEventListener('touchmove', e => {
-    const t = e.touches[0];
-    if (Math.abs(t.clientX - sx) > 8 || Math.abs(t.clientY - sy) > 8) clearTimeout(lp);
+    const t = e.touches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(lp);
     if (S.selecting && dragMode !== null) {
       const c = cellAt(t.clientX, t.clientY);
       if (c && c.dataset.date !== lastDrag) { lastDrag = c.dataset.date; togglePick(lastDrag, dragMode); }
+      return;
     }
-  }, { passive: true });
+    if (S.selecting || isWide()) return;
+    if (!vdrag && Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.3 && window.scrollY <= 0 &&
+        ((dy > 0 && !S.settings.calExpanded) || (dy < 0 && S.settings.calExpanded))) {
+      vdrag = { h0: startH(), h: startH(), y0: sy, t0: e.timeStamp, rendered: false };
+      document.body.classList.add('cal-dragging');
+    }
+    if (vdrag) { e.preventDefault(); dragTo(dy); }
+  }, { passive: false });
+  // fim do toque ouvido na janela: mesmo que o dedo saia da grade, o gesto termina corretamente
+  window.addEventListener('touchend', e => { if (vdrag && !e.target.closest('#calHandle')) { swiped = true; const t = e.changedTouches[0]; finishDrag(t ? t.clientY - sy : 0, e.timeStamp - vdrag.t0); } }, { passive: true });
   wrap.addEventListener('touchend', e => {
     clearTimeout(lp);
     if (S.selecting) { dragMode = null; return; }
+    if (vdrag || document.body.classList.contains('cal-dragging')) return;
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; goMonth(dx < 0 ? 1 : -1); }
   }, { passive: true });
+  // alça: toque alterna, arraste funciona igual à grade
+  const handle = $('#calHandle');
+  handle.addEventListener('click', () => { if (!handle.dataset.dragged) setExpanded(!S.settings.calExpanded); delete handle.dataset.dragged; });
+  handle.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!S.settings.calExpanded); } });
+  let hy = 0, ht = 0;
+  handle.addEventListener('touchstart', e => { hy = e.touches[0].clientY; ht = e.timeStamp; vdrag = { h0: startH(), h: startH(), t0: e.timeStamp, rendered: false }; }, { passive: true });
+  handle.addEventListener('touchmove', e => {
+    if (!vdrag) return;
+    const dy = e.touches[0].clientY - hy;
+    if (Math.abs(dy) > 6) { e.preventDefault(); document.body.classList.add('cal-dragging'); handle.dataset.dragged = '1'; dragTo(dy); }
+  }, { passive: false });
+  handle.addEventListener('touchend', e => {
+    if (!vdrag) return;
+    if (handle.dataset.dragged) finishDrag(e.changedTouches[0].clientY - hy, e.timeStamp - ht); else vdrag = null;
+  });
   $('#grid').addEventListener('contextmenu', e => {
     e.preventDefault();
     const c = e.target.closest('.cell:not(.out)');
@@ -1344,6 +1456,8 @@ function bind() {
   $('#groupActions').onclick = e => { const b = e.target.closest('[data-act]'); if (b && !b.disabled) groupAction(b.dataset.act); };
 
   // Dia
+  $('#btnDayClose').onclick = () => { if (isWide()) { setDock(false); renderGrid(); } else closeTop(); };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && isWide() && S.dayOpen && !layers.length) { setDock(false); renderGrid(); } });
   $('#btnDayAdd').onclick = () => openForm({ date: S.selected, paid: S.checking ? true : undefined });
   $('#btnDaySelect').onclick = async () => { const d = S.selected; if (!isWide()) await closeTop(); enterSelect(d); };
   $('#dayBody').addEventListener('click', e => {
@@ -1550,6 +1664,9 @@ async function init() {
   renderGrid();
   bind();
   applyLayout();
+  measureCal();
+  $('#calHandle').classList.toggle('up', isExpanded());
+  renderGrid();
   refreshDerived();
   db.requestPersistence();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
