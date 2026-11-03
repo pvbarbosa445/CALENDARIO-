@@ -685,3 +685,114 @@ body.cal-exp .summary-line { padding-right: 78px; }
 .section-label + .reveal, .item + .reveal { margin-top: 6px; }
 /* superfícies neutras (sem tom azulado) */
 #daySheet.docked, #daySheet.docked.on { border-color: #262626; }
+
+/* =================== v1.8 — lançamentos como etiquetas (referência: Samsung Calendar) =================== */
+/* Cada lançamento é uma etiqueta preenchida com a cor da tag, texto branco legível e o valor à direita.
+   Só a etiqueta recebe cor; o quadrado do dia continua cinza neutro. */
+.cell .num { font-weight: 600; color: var(--text); }
+.cell.wkend .num, .cell.out .num { font-weight: 500; }
+.cell .lns { gap: 2px; margin-top: 4px; }
+.cell .ln {
+  height: 16px; line-height: 16px; font-size: 10.5px; gap: 3px; padding: 0 3px 0 0; border-radius: 3px; overflow: hidden;
+  color: #F4F4F4; background: rgba(255, 255, 255, .08); background: color-mix(in srgb, var(--c, #888) 36%, #151515);
+}
+.cell .ln i { width: 3px; height: 100%; border-radius: 0; background: var(--c, #888); }
+.cell .ln b { font-weight: 500; color: #F4F4F4; text-overflow: clip; letter-spacing: -.15px; }
+.cell .ln em { display: block; font-size: 9.5px; font-weight: 600; color: #F4F4F4; letter-spacing: -.2px; }
+.cell .ln em.pos { color: #9BE8BD; }
+.cell .ln em.neg { color: #F6B0B0; }
+.cell .ln.done { opacity: .62; }
+.cell .ln.done b { color: #F4F4F4; }
+.cell .ln.more { background: none; color: var(--text-2); padding-left: 3px; font-weight: 600; }
+/* feriado: etiqueta azul-claro discreta com o nome (como "Finados" no Samsung) */
+.cell .ln.hol { background: rgba(169, 212, 245, .22); padding: 0 4px; }
+.cell .ln.hol b { color: #EAF4FC; }
+@media (min-width: 600px) { .cell .ln { font-size: 11.5px; } .cell .ln em { font-size: 10.5px; } }
+@media (min-width: 1100px) {
+  .cell .lns { gap: 2px; margin-top: 5px; }
+  .cell .ln { height: 16px; line-height: 16px; font-size: 11.5px; gap: 5px; padding-right: 6px; border-radius: 4px; }
+  .cell .ln em { font-size: 11px; }
+  .cell .ln.hol { padding: 0 6px; }
+}
+/* barrinha da tag sempre colada à esquerda da etiqueta */
+.cell .ln { position: relative; padding-left: 6px; }
+.cell .ln i { position: absolute; left: 0; top: 0; bottom: 0; }
+.cell .ln.hol, .cell .ln.more { padding-left: 4px; }
+/* celular: etiqueta em duas linhas (nome em cima, valor embaixo), como as etiquetas do Samsung */
+@media (max-width: 599px) {
+  .cell .ln { flex-direction: column; align-items: stretch; justify-content: center; gap: 0; height: 25px; line-height: 12px; padding: 0 2px 0 5px; }
+  .cell .ln b { flex: none; line-height: 12.5px; }
+  .cell .ln em { line-height: 12px; text-align: left; font-size: 10px; }
+  .cell .ln.hol b { white-space: normal; word-break: break-all; overflow: hidden; max-height: 25px; line-height: 12.5px; }
+  .cell .ln.more { height: 16px; justify-content: flex-start; }
+}
+/* seletor de conta no topo do menu (uma conta por vez) */
+.acc-seg { overflow-x: auto; scrollbar-width: none; }
+.acc-seg::-webkit-scrollbar { display: none; }
+.acc-seg button { flex: 1 0 auto; padding: 0 12px; white-space: nowrap; }
+
+/* =================== v1.8 — cores medidas nas capturas do Calendário Samsung (pixel a pixel) ===================
+   fundo #010101 · dia #141414 · outro mês #0D0D0D (número #545454) · feriado #0F1223 com etiqueta #3E4B91
+   hoje: selo branco com número preto · selecionado: contorno #565656 · números e cabeçalho brancos, domingo #E27472
+   botão "Adic.": #1E1E1E com borda #3A3B3D e texto #CDCDCF · texto secundário #9B9B9B */
+:root { --bg: #010101; --cell: #141414; --cell-out: #0D0D0D; --text: #FFFFFF; --text-2: #9B9B9B; --sun: #E27472; --hol-cell: #0F1223; --hol-chip: #3E4B91; --sel-line: #565656; }
+@media (min-width: 1100px) { :root { --cell: #141414; --cell-out: #0D0D0D; } .cell:hover { background: #1A1A1A; } .cell.out:hover { background: #111111; } }
+html, body, .topbar { background: var(--bg); }
+.weekdays div { color: #FFFFFF; }
+.weekdays div.sun { color: var(--sun); }
+.cell .num, .cell.wkend .num { color: #FFFFFF; font-weight: 600; }
+.cell.sun .num { color: var(--sun); }
+.cell.out .num, .cell.out.sun .num { color: #545454; font-weight: 500; }
+/* feriado: quadrado com o tom azul-marinho do Samsung e etiqueta com o nome */
+.cell.hol:not(.out) { background: var(--hol-cell); }
+.cell.hol .num { color: #FFFFFF; }
+.cell.hol.sun .num { color: var(--sun); }
+.cell .ln.hol { background: var(--hol-chip); }
+.cell .ln.hol b { color: #F7FDFF; }
+/* hoje: selo branco com o número preto */
+.cell.today .num, .cell.today.sun .num, .cell.today.hol .num { background: #FFFFFF; color: #000000; border-radius: 8px; font-weight: 700; }
+/* dia selecionado: só o contorno cinza do Samsung */
+.cell.sel { box-shadow: inset 0 0 0 1.5px var(--sel-line); }
+.cell.sel:not(.hol) { background: var(--cell); }
+/* botão de adicionar e "Novo": a pílula "Adic." do Samsung */
+.fab { background: #1E1E1E; color: #E6E6E6; box-shadow: inset 0 0 0 1px #3A3B3D; }
+.fab:active { background: #262626; }
+@media (min-width: 1100px) {
+  .new-btn { background: #1E1E1E; color: #CDCDCF; box-shadow: inset 0 0 0 1px #3A3B3D; }
+  .new-btn svg { color: #CDCDCF; }
+  .new-btn:hover { background: #262626; }
+}
+/* lançamentos como os eventos do Samsung ("Teste"): barrinha na cor da tag + texto branco, sem preenchimento */
+.cell .ln { background: transparent; }
+.cell .ln i { width: 3px; border-radius: 1.5px; }
+.cell .ln b { color: #FFFFFF; }
+.cell .ln em { color: #CDCDCF; }
+.cell .ln em.pos { color: var(--green); }
+.cell .ln em.neg { color: var(--red); }
+.cell .ln.done { opacity: .55; }
+
+/* =================== v1.8.2 — etiquetas das tags no formato da etiqueta do Samsung; feriado e fim de semana discretos ===================
+   Lançamento: etiqueta preenchida (cor da tag no tom do Samsung) com texto branco, cantos de 4px, sem barrinha.
+   Feriado: só o número em azul-claro (o quadrado fica igual aos outros). Sábado e domingo: quadrado um pouco mais escuro
+   e número em cinza claro — sem vermelho, que continua só para valores negativos. */
+:root { --wkend-cell: #0F0F0F; --wkend-num: #A0A0A0; }
+.cell .ln { background: var(--c, #3E4B91); border-radius: 4px; padding: 0 4px; }
+.cell .ln i { display: none; }
+.cell .ln b { color: #FFFFFF; font-weight: 500; }
+.cell .ln em, .cell .ln em.pos, .cell .ln em.neg { color: rgba(255, 255, 255, .86); font-weight: 600; }
+.cell .ln.done { opacity: .5; }
+.cell .ln.more { background: none; padding-left: 2px; }
+@media (max-width: 599px) { .cell .ln { padding: 0 3px; } }
+/* fim de semana */
+.cell.wkend:not(.out) { background: var(--wkend-cell); }
+.cell.wkend .num, .cell.sun .num, .cell.hol.sun .num { color: var(--wkend-num); font-weight: 600; }
+.weekdays div.sun { color: var(--wkend-num); }
+/* feriado: só o número */
+.cell.hol:not(.out) { background: var(--cell); }
+.cell.hol.wkend:not(.out) { background: var(--wkend-cell); }
+.cell.hol .num, .cell.hol.wkend .num, .cell.hol.sun .num { color: var(--accent); }
+.cell.out .num { color: #545454; }
+.cell.today .num, .cell.today.wkend .num, .cell.today.hol .num { background: #FFFFFF; color: #000000; }
+.cell.sel:not(.hol), .cell.sel { background: var(--cell); }
+.cell.sel.wkend { background: var(--wkend-cell); }
+@media (min-width: 1100px) { .cell.wkend:not(.out):hover { background: #161616; } }

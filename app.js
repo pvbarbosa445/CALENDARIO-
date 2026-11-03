@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.7.0';
+export const APP_VERSION = '1.8.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -45,7 +45,7 @@ const sgnCls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : 'muted');
 // ---------- Estado ----------
 const DEFAULTS = {
   showIncome: true, showExpense: true, showTags: true, hiddenTags: [], showMovement: false,
-  showTransfers: true, hiddenAccounts: [], defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
+  showTransfers: true, hiddenAccounts: [], activeAccount: null, defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
   summaryOpen: false, calExpanded: false,
@@ -61,14 +61,41 @@ const tag = id => (id ? S.tags.get(id) : null);
 const accountsList = (all = false) => [...S.accounts.values()].filter(a => all || !a.archived).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 const accName = id => (S.accounts.get(id) || {}).name || 'Conta';
 const multiAcc = () => accountsList().length > 1;
-/** Contas que entram no calendário: incluídas no consolidado, não arquivadas e não ocultas no filtro. */
-function visibleAccounts() {
-  const hidden = new Set(S.settings.hiddenAccounts);
-  return new Set(accountsList().filter(a => a.includeInTotal !== false && !hidden.has(a.id)).map(a => a.id));
+/**
+ * Conta exibida (o "mundo"): uma conta por vez, escolhida no topo do menu (Conta 1 | Conta 2).
+ * Lançamentos, metas, cofrinhos, alertas e relatórios de uma conta não aparecem na outra.
+ * Só a exibição muda — nada é apagado e os saldos de cada conta continuam corretos.
+ */
+function activeAccount() {
+  const list = accountsList();
+  if (!list.length) return null;
+  const ids = new Set(list.map(a => a.id));
+  if (ids.has(S.settings.activeAccount)) return S.settings.activeAccount;
+  // vindo de versões anteriores: a conta principal (se estava visível) ou a primeira conta visível
+  const hidden = new Set(S.settings.hiddenAccounts || []);
+  if (ids.has(S.settings.defaultAccount) && !hidden.has(S.settings.defaultAccount)) return S.settings.defaultAccount;
+  return (list.find(a => !hidden.has(a.id)) || list[0]).id;
 }
-// Cada conta é um "mundo" separado: ocultar uma conta esconde seus lançamentos, metas e alertas.
-// (Só a exibição muda — nada é apagado e os saldos de cada conta continuam corretos.)
-const filtering = () => (S.settings.hiddenAccounts || []).length > 0;
+function visibleAccounts() {
+  const a = activeAccount();
+  return new Set(a ? [a] : []);
+}
+const filtering = () => multiAcc();
+/** Tag "pertence" às contas onde é usada (lançamentos e metas); tag nunca usada aparece em todas. */
+function tagInWorld(t) {
+  if (!multiAcc() || !S.set) return true;
+  const where = new Set();
+  for (const e of S.entries.values()) {
+    const ids = e.splits ? e.splits.map(p => p.tagId) : [e.tagId, ...(e.segments || []).map(g => g.tagId)];
+    if (ids.includes(t.id)) where.add(e.accountId || S.settings.defaultAccount);
+  }
+  for (const m of S.metas.values()) {
+    if (m.archived || !(m.tagIds || []).includes(t.id)) continue;
+    if (!(m.accountIds || []).length) return true;
+    m.accountIds.forEach(id => where.add(id));
+  }
+  return !where.size || [...where].some(id => S.set.has(id));
+}
 function accVisible(it) {
   if (!S.set) return true;
   if (it.kind === 'transfer') return S.set.has(it.accountId) || S.set.has(it.toAccountId);
@@ -96,6 +123,26 @@ function tagColor(t) {
   }
   return t.color;
 }
+/**
+ * Cor da etiqueta de um lançamento: o mesmo matiz da tag, levado ao tom da etiqueta do Samsung
+ * (#3E4B91: saturação ~40%, luminosidade ~40%), para o texto branco ficar sempre legível.
+ */
+const VAR_HEX = { 'var(--green)': '#55C98B', 'var(--red)': '#E47777', 'var(--accent)': '#A9D4F5' };
+function chipColor(c) {
+  const hex = VAR_HEX[c] || c;
+  if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#3E4B91';
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 360) % 360;
+  const l0 = (mx + mn) / 2, s0 = d ? d / (1 - Math.abs(2 * l0 - 1)) : 0;
+  const S2 = d ? Math.min(0.42, Math.max(0.28, s0)) : 0;               // tom contido como o #3E4B91; cinzas continuam cinzas
+  const L2 = h >= 40 && h <= 75 ? 0.32 : h > 75 && h < 170 ? 0.33 : 0.39; // amarelos e verdes um pouco mais escuros
+  const k = (1 - Math.abs(2 * L2 - 1)) * S2, x = k * (1 - Math.abs(((h / 60) % 2) - 1)), m = L2 - k / 2;
+  const [R, G, B] = h < 60 ? [k, x, 0] : h < 120 ? [x, k, 0] : h < 180 ? [0, k, x] : h < 240 ? [0, x, k] : h < 300 ? [x, 0, k] : [k, 0, x];
+  return '#' + [R, G, B].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
 function shade(hex, f) {
   const n = parseInt(hex.slice(1), 16);
   const ch = [n >> 16, (n >> 8) & 255, n & 255].map(c => Math.round(f >= 0 ? c + (255 - c) * f : c * (1 + f)));
@@ -115,7 +162,7 @@ function rebuild() {
 let saveTimer;
 const SETTING_NAMES = {
   showIncome: 'Exibir receitas', showExpense: 'Exibir despesas', showTags: 'Exibir tags', hiddenTags: 'Tags visíveis', showMovement: 'Movimento do dia',
-  showTransfers: 'Transferências e cofrinhos', hiddenAccounts: 'Contas no calendário', basis: 'Previsto/realizado', carry: 'Acumular meses',
+  showTransfers: 'Transferências e cofrinhos', hiddenAccounts: 'Contas no calendário', activeAccount: 'Conta exibida', basis: 'Previsto/realizado', carry: 'Acumular meses',
   startDate: 'Início do saldo', mondayFirst: 'Início da semana', holState: 'Feriados estaduais', holCity: 'Feriados municipais',
   holOptional: 'Pontos facultativos', customHolidays: 'Feriados próprios', disabledHolidays: 'Feriados ligados', panels: 'Painéis', alerts: 'Alertas', defaultAccount: 'Conta principal',
 };
@@ -282,7 +329,7 @@ function measureCal() {
   // PC: dias com altura máxima confortável (e o mês inteiro cabendo na tela); celular: expandido preenche a tela
   CAL.expanded = isWide() ? Math.max(84, Math.min(fill, 150)) : Math.max(CAL.compact + 24, fill);
   // quantas linhas de lançamento cabem no dia expandido (o conteúdo é montado uma vez só)
-  const lineH = isWide() ? 18 : 15;
+  const lineH = isWide() ? 18 : window.innerWidth < 600 ? 27 : 18; // etiqueta + fresta (celular: etiqueta de 2 linhas)
   CAL.lines = Math.max(1, Math.floor((CAL.expanded - (isWide() ? 64 : 50)) / lineH));
   applyCellHeight(isExpanded() ? CAL.expanded : CAL.compact);
 }
@@ -341,11 +388,11 @@ function renderHeader() {
   const { y, m } = S.view;
   $('#monthName').textContent = MONTHS[m - 1];
   $('#yearName').textContent = y;
-  // quando há contas ocultas, mostra qual conta ("mundo") está sendo exibida
+  // com mais de uma conta, mostra qual conta ("mundo") está sendo exibida
   const shown = filtering() ? accountsList().filter(x => S.set && S.set.has(x.id)).map(x => x.name) : [];
   $('#accLabel').textContent = shown.length ? shown.join(' + ') : (filtering() ? 'Nenhuma conta' : '');
   const order = S.settings.mondayFirst ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
-  $('#weekdays').innerHTML = order.map(w => `<div>${WEEKDAYS_SHORT[w]}</div>`).join('');
+  $('#weekdays').innerHTML = order.map(w => `<div${w === 0 || w === 6 ? ' class="sun"' : ''}>${WEEKDAYS_SHORT[w]}</div>`).join('');
 }
 
 const countsPlanned = it => it.status === 'planned' || it.status === 'paid' || it.status === 'pending' || it.status === 'partial';
@@ -399,6 +446,7 @@ function renderGrid(anim) {
     let cls = 'cell';
     if (!inMonth) cls += ' out';
     if (w === 0 || w === 6) cls += ' wkend';
+    if (w === 0) cls += ' sun';
     if (S.isHoliday(date)) cls += ' hol';
     if (date === t) cls += ' today';
     if (S.selecting ? S.picked.has(date) : date === S.selected && dayVisible() && (!isWide() || S.dayChosen)) cls += S.selecting ? ' picked' : ' sel';
@@ -441,11 +489,13 @@ function dayLines(day, max) {
   // Receitas/Despesas e tags escondidas decidem QUAIS lançamentos aparecem. Nada disso mexe nos cálculos.
   const list = day.items.filter(it => countsPlanned(it) && accVisible(it) &&
     (it.kind === 'income' || it.kind === 'expense' || (it.kind === 'transfer' && s.showTransfers)) && passesFilters(it));
+  // feriado: só o número do dia muda de cor (o calendário não é agenda; as etiquetas são só das tags)
+  const room = max;
   if (!list.length) return '';
   const order = { income: 0, transfer: 1, expense: 2 };
   list.sort((a, b) => (order[a.kind] - order[b.kind]) || (b.amount - a.amount));
   // com espaço para uma linha só, mostra o primeiro lançamento (sem trocar por "+n")
-  const show = list.length > max ? list.slice(0, max >= 2 ? max - 1 : 1) : list;
+  const show = list.length > room ? list.slice(0, room >= 2 ? room - 1 : room) : list;
   const rest = list.length - show.length;
   const line = it => {
     const tg = tag(it.tagId);
@@ -453,7 +503,8 @@ function dayLines(day, max) {
     const sg = itemSign(it);
     // dica ao passar o mouse (PC): tag · descrição · valor
     const tip = [tg && tg.name !== name ? tg.name : null, name, `${sg}${money(it.amount)}`].filter(Boolean).join(' · ');
-    return `<span class="ln${it.status === 'paid' ? ' done' : ''}" title="${esc(tip)}"><i style="background:${itemColor(it)}"></i><b>${esc(name)}</b><em class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
+    // etiqueta preenchida como a do Samsung ("Finados"): cor da tag no tom do Samsung e texto branco
+    return `<span class="ln${it.status === 'paid' ? ' done' : ''}" style="--c:${chipColor(itemColor(it))}" title="${esc(tip)}"><b>${esc(name)}</b><em>${sg === '+' ? '+' : sg === '−' ? '−' : ''}${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
   };
   return `<span class="lns">${show.map(line).join('')}${rest ? `<span class="ln more">+${rest}</span>` : ''}</span>`;
 }
@@ -474,8 +525,7 @@ function renderSummary() {
     ${s.carry ? kv('Saldo inicial', signed(mo.opening.planned), sgnCls(mo.opening.planned)) : ''}
     ${kv('Receitas', `${money(t.incPaid)} de ${money(t.inc)}`, 'pos')}
     ${kv('Despesas', `${money(t.expPaid)} de ${money(t.exp)}`, 'neg')}
-    ${kv('Saldo previsto', signed(t.inc - t.exp), sgnCls(t.inc - t.exp))}
-    ${kv('Saldo realizado', signed(t.incPaid - t.expPaid), sgnCls(t.incPaid - t.expPaid))}
+    ${kv('Resultado do mês', signed(t.inc - t.exp), sgnCls(t.inc - t.exp))}
   </span>`;
   $('#summary').setAttribute('aria-expanded', String(!!s.summaryOpen));
 }
@@ -518,7 +568,9 @@ function refreshDerived() {
     const bell = $('#btnAlerts');
     bell.hidden = !S.alerts.length;
     bell.classList.toggle('bad', S.alerts.some(a => a.level === 'bad'));
-    $('#navBalance').textContent = S.accounts.size ? signed(S.bal.totals.total) : '';
+    // no menu, o saldo da conta exibida (com uma conta só, o total)
+    const act = activeAccount(), ab = act && S.bal.accounts.get(act);
+    $('#navBalance').textContent = !S.accounts.size ? '' : multiAcc() && ab ? signed(ab.real) : signed(S.bal.totals.total);
     pages.renderPanels($('#panels'));
   }, 30);
 }
@@ -537,6 +589,7 @@ function statusLabel(it) {
   if (it.kind === 'release') return { paid: 'Retirado', planned: 'A retirar' }[it.status] || STATUS[it.status];
   if (it.kind === 'transfer') return { paid: 'Concluída', planned: 'Agendada', pending: 'Pendente', partial: 'Parcial' }[it.status] || STATUS[it.status];
   if (it.status === 'paid' && it.kind === 'income') return 'Recebido';
+  if (it.status === 'moved' && it.movedTo && it.movedTo < it.date) return 'Antecipado';
   if (it.status === 'partial') return `${it.kind === 'income' ? 'Recebido' : 'Pago'} ${money(it.paidAmount || 0)}`;
   return STATUS[it.status];
 }
@@ -638,10 +691,8 @@ function renderDay(date) {
   const inc = list.filter(i => i.kind === 'income');
   const exp = list.filter(i => i.kind === 'expense');
   const internal = list.filter(isInternal);
-  const basisReal = S.settings.basis === 'realized';
   let html = `<div class="balance">
-    <div class="${basisReal ? '' : 'cur'}"><small>Saldo previsto</small><b class="${sgnCls(d.cumNet)}">${signed(d.cumNet)}</b></div>
-    <div class="${basisReal ? 'cur' : ''}"><small>Saldo realizado</small><b class="${sgnCls(d.cumNetReal)}">${signed(d.cumNetReal)}</b></div>
+    <div class="cur"><small>Saldo do dia</small><b class="${sgnCls(d.cumNet)}">${signed(d.cumNet)}</b></div>
   </div>`;
   if (!all.length) html += `<div class="empty">${checking ? 'Nenhum lançamento previsto. Adicione um gasto ou conclua como dia sem gastos.' : 'Nenhum lançamento.'}</div>`;
   else if (!detail) {
@@ -944,7 +995,8 @@ const Fm = { mode: 'new', item: null, entry: null, kind: 'expense', weekdays: ne
 const POLICY_RULES = new Set(['once', 'daily', 'weekly', 'monthlyDay', 'interval', 'dates']);
 
 function fillTagSelect(selected) {
-  const opts = tagsSorted().filter(t => t.kind === 'both' || t.kind === Fm.kind);
+  // só as tags da conta exibida (e a tag atual do lançamento, se for outra)
+  const opts = tagsSorted().filter(t => (t.kind === 'both' || t.kind === Fm.kind) && (t.id === selected || tagInWorld(t)));
   $('#fTag').innerHTML = `<option value="">Nenhuma</option>${opts.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('')}<option value="__new">Nova tag…</option>`;
   $('#fTag').value = opts.some(t => t.id === selected) ? selected : '';
 }
@@ -964,7 +1016,7 @@ function setKind(k) {
 function fillAccountSelects(from, to) {
   const opts = accountsList().map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
   $('#fAccount').innerHTML = opts; $('#fTo').innerHTML = opts;
-  $('#fAccount').value = from || S.settings.defaultAccount;
+  $('#fAccount').value = from || activeAccount() || S.settings.defaultAccount;
   $('#fTo').value = to || (accountsList().find(a => a.id !== $('#fAccount').value) || {}).id || '';
   const origins = new Set([...S.entries.values()].map(e => e.origin).filter(Boolean));
   $('#originList').innerHTML = [...origins].map(o => `<option value="${esc(o)}">`).join('');
@@ -1380,14 +1432,14 @@ function renderTagList() {
 function syncDrawer() {
   const s = S.settings;
   $$('[data-setting]').forEach(el => { el.checked = !!s[el.dataset.setting]; });
-  $$('#basisSeg button').forEach(b => b.classList.toggle('on', b.dataset.basis === s.basis));
+  const act = activeAccount();
+  $('#accSeg').hidden = !multiAcc();
+  $('#accSeg').innerHTML = multiAcc() ? accountsList().map(a => `<button type="button" data-acc="${a.id}" class="${a.id === act ? 'on' : ''}">${esc(a.name)}</button>`).join('') : '';
+  $('#rowTransfers').hidden = !multiAcc();
   $('#startDate').value = s.startDate || '';
   $$('.carry-only').forEach(el => { el.hidden = !s.carry; });
   $('#holState').value = s.holState;
   $('#holCity').value = s.holCity;
-  $('#accFilterBox').hidden = !multiAcc();
-  const hiddenAcc = new Set(s.hiddenAccounts);
-  $('#accFilter').innerHTML = accountsList().filter(a => a.includeInTotal !== false).map(a => `<label class="row"><span class="dot" style="background:${a.color || 'var(--accent)'}"></span><span>${esc(a.name)}</span><input type="checkbox" class="switch" data-acc="${a.id}" ${hiddenAcc.has(a.id) ? '' : 'checked'}></label>`).join('');
   const P = { accounts: 'Contas', metas: 'Metas e orçamentos', pending: 'Pendências', upcoming: 'Próximos 7 dias', piggies: 'Cofrinhos' };
   $('#panelCfg').innerHTML = Object.entries(P).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-panel="${k}" ${s.panels[k] ? 'checked' : ''}></label>`).join('');
   $('#alertCfg').innerHTML = Object.entries(F.ALERT_TYPES).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-alert="${k}" ${s.alerts[k] === false ? '' : 'checked'}></label>`).join('');
@@ -1654,7 +1706,7 @@ function bind() {
     // a grade e o painel do dia seguem a mesma exibição
     if (S.selected && dayVisible()) renderDay(S.selected);
   }));
-  $('#basisSeg').onclick = e => {
+  if ($('#basisSeg')) $('#basisSeg').onclick = e => { // (opção retirada na v1.8)
     const b = e.target.closest('button'); if (!b) return;
     S.settings.basis = b.dataset.basis; saveSettings();
     $$('#basisSeg button').forEach(x => x.classList.toggle('on', x === b));
@@ -1696,11 +1748,15 @@ function bind() {
     if (S.selected && dayVisible()) renderDay(S.selected);
   });
   $('#btnSample').onclick = loadSample;
-  $('#accFilter').addEventListener('change', e => {
-    const id = e.target.dataset.acc; if (!id) return;
-    const set = new Set(S.settings.hiddenAccounts);
-    e.target.checked ? set.delete(id) : set.add(id);
-    S.settings.hiddenAccounts = [...set]; saveSettings(); refresh(); renderHeader();
+  $('#accSeg').addEventListener('click', e => {
+    const b = e.target.closest('[data-acc]'); if (!b) return;
+    const id = b.dataset.acc;
+    if (id === activeAccount()) return;
+    S.settings.activeAccount = id;
+    S.settings.hiddenAccounts = accountsList().map(a => a.id).filter(x => x !== id); // compatibilidade
+    $$('#accSeg button').forEach(x => x.classList.toggle('on', x === b));
+    S.dayReveal = null;
+    saveSettings(); refresh(); renderHeader();
   });
   $('#panelCfg').addEventListener('change', e => { const k = e.target.dataset.panel; if (!k) return; S.settings.panels = { ...S.settings.panels, [k]: e.target.checked }; saveSettings(); refreshDerived(); });
   $('#alertCfg').addEventListener('change', e => { const k = e.target.dataset.alert; if (!k) return; S.settings.alerts = { ...S.settings.alerts, [k]: e.target.checked }; saveSettings(); refreshDerived(); });
@@ -1817,6 +1873,7 @@ async function init() {
     checks.forEach(c => S.checks.set(c.date, c));
     const app = settings.find(s => s.key === 'app');
     if (app) S.settings = { ...DEFAULTS, ...app.value };
+    S.settings.basis = 'planned'; // v1.8: a opção Previsto/Realizado foi retirada; o calendário mostra sempre o previsto
     lastSaved = JSON.parse(JSON.stringify(S.settings));
     await ensureDefaultAccount();
   } catch (err) {

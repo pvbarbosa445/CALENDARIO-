@@ -9,9 +9,11 @@ import { addDays, weekday, parse, iso, daysInMonth, range } from './dates.js';
 
 export const flat = byDate => [...byDate.values()].flat().filter(i => i.status !== 'moved');
 
-export function firstDate(entries, fallback) {
+export function firstDate(entries, fallback, overrides) {
   let min = fallback;
   for (const e of entries) if (e.rule.start < min) min = e.rule.start;
+  // ocorrências antecipadas para antes do primeiro lançamento (ex.: receita recebida adiantada) também contam
+  if (overrides) for (const o of overrides.values()) if (o.movedTo && o.movedTo < min) min = o.movedTo;
   return min;
 }
 
@@ -23,7 +25,7 @@ export function firstDate(entries, fallback) {
 export function balances({ data, accounts, piggies = [], today, planUpto }) {
   const acc = new Map(accounts.map(a => [a.id, { id: a.id, real: a.initialBalance || 0, planned: a.initialBalance || 0, reserved: 0, committed: 0, pendingOut: 0, pendingIn: 0 }]));
   const pig = new Map(piggies.map(p => [p.id, { id: p.id, saved: 0 }]));
-  const from = firstDate(data.entries, today);
+  const from = firstDate(data.entries, today, data.overrides);
   const items = flat(itemsInRange(from, planUpto, data));
   const A = id => acc.get(id);
   for (const it of items) {
@@ -215,7 +217,7 @@ export function computeAlerts(ctx) {
   const on = k => !enabled || enabled[k] !== false;
   const out = [];
   // atrasos não expiram: olha desde o primeiro lançamento até ontem
-  const past = flat(itemsInRange(firstDate(data.entries, addDays(today, -1)), addDays(today, -1), data));
+  const past = flat(itemsInRange(firstDate(data.entries, addDays(today, -1), data.overrides), addDays(today, -1), data));
   if (on('unpaid')) {
     const l = past.filter(i => i.kind === 'expense' && (i.status === 'planned' || i.status === 'pending' || i.status === 'partial') && (!set || set.has(i.accountId)));
     if (l.length) out.push({ type: 'unpaid', level: 'warn', text: `${l.length} ${l.length === 1 ? 'despesa vencida não paga' : 'despesas vencidas não pagas'}`, date: l[0].date, items: l });
@@ -264,7 +266,7 @@ const fmtC = c => 'R$ ' + (c / 100).toFixed(2).replace('.', ',');
 export function projectNegative(data, set, startBalance, today, days) {
   // saldo de hoje (realizado) + tudo que ainda falta acontecer, inclusive atrasados
   let bal = startBalance;
-  const overdue = flat(itemsInRange(firstDate(data.entries, addDays(today, -1)), addDays(today, -1), data));
+  const overdue = flat(itemsInRange(firstDate(data.entries, addDays(today, -1), data.overrides), addDays(today, -1), data));
   for (const it of overdue) { const f = flowOf(it, set); if (f) bal += (f.inc - f.incR) - (f.exp - f.expR) + (f.tr - f.trR); }
   const by = itemsInRange(today, addDays(today, days), data);
   for (const d of range(today, addDays(today, days))) {

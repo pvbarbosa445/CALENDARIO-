@@ -58,19 +58,15 @@
         <button class="row" data-page="reports"><span class="ic" data-icon="chart"></span><span>Relatórios</span></button>
         <button class="row" data-page="history"><span class="ic" data-icon="history"></span><span>Histórico</span></button>
       </div>
-      <div class="segmented basis-top" id="basisSeg"><button data-basis="planned">Previsto</button><button data-basis="realized">Realizado</button></div>
+      <div class="segmented basis-top acc-seg" id="accSeg" hidden></div>
       <div class="group-title">Exibição</div>
       <div class="group">
         <label class="row"><span class="dot inc"></span><span>Receitas</span><input type="checkbox" class="switch" data-setting="showIncome"></label>
         <label class="row"><span class="dot exp"></span><span>Despesas</span><input type="checkbox" class="switch" data-setting="showExpense"></label>
         <label class="row"><span class="dot tag"></span><span>Tags</span><input type="checkbox" class="switch" data-setting="showTags"></label>
+        <label class="row" id="rowTransfers" hidden><span>Transferências e cofrinhos</span><input type="checkbox" class="switch" data-setting="showTransfers"></label>
       </div>
 
-      <div id="accFilterBox" hidden>
-        <div class="group-title">Contas no calendário</div>
-        <div class="group" id="accFilter"></div>
-        <div class="group"><label class="row"><span>Mostrar transferências e cofrinhos</span><input type="checkbox" class="switch" data-setting="showTransfers"></label></div>
-      </div>
     </div>
   </aside>
 

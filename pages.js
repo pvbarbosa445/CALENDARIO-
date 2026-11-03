@@ -523,7 +523,7 @@ function piggiesView() {
     title: 'Cofrinhos', right: { icon: 'plus', fn: () => push(piggyForm()) },
     body: () => {
       const b = bal(), { money, esc } = C;
-      const list = [...S().piggies.values()].filter(p => !p.archived);
+      const list = [...S().piggies.values()].filter(p => !p.archived && (p.type === 'real' || !S().set || S().set.has(p.accountId)));
       const total = list.reduce((s, p) => s + ((b.piggies.get(p.id) || {}).saved || 0), 0);
       return `<div class="stats">${stat('Total guardado', money(total), '', true)}</div>
         ${list.map(p => {
@@ -605,7 +605,7 @@ async function piggyMove(id, dir) {
 }
 
 function piggyForm(p = null) {
-  const value = p ? { ...p } : { name: '', type: 'virtual', accountId: S().settings.defaultAccount, goal: 0, deadline: '', color: C.PALETTE[(S().piggies.size * 5 + 3) % C.PALETTE.length] };
+  const value = p ? { ...p } : { name: '', type: 'virtual', accountId: [...(S().set || [])][0] || S().settings.defaultAccount, goal: 0, deadline: '', color: C.PALETTE[(S().piggies.size * 5 + 3) % C.PALETTE.length] };
   return formView({
     title: p ? 'Editar cofrinho' : 'Novo cofrinho', value,
     fields: [
@@ -942,7 +942,7 @@ export function renderPanels(box) {
         body: items.slice(0, 20).map(it => movementRow(it)).join('') || '<p class="hint">Nada previsto.</p>' };
     },
     piggies: () => {
-      const list = [...S().piggies.values()].filter(p => !p.archived);
+      const list = [...S().piggies.values()].filter(p => !p.archived && (p.type === 'real' || !S().set || S().set.has(p.accountId)));
       const total = list.reduce((s, p) => s + ((b.piggies.get(p.id) || {}).saved || 0), 0);
       return { label: 'Cofrinhos', value: money(total), cls: '',
         body: list.map(p => { const sv = (b.piggies.get(p.id) || {}).saved || 0; return `<button class="card-row col" data-a="page" data-id="piggies"><span class="line"><span class="dot" style="background:${p.color}"></span><span class="grow t">${esc(p.name)}</span><span class="v">${money(sv)}</span></span>${p.goal ? progress(sv / p.goal, p.color) : ''}</button>`; }).join('') };
