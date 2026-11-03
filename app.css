@@ -1,14 +1,17 @@
 /* Calendário Financeiro — visual minimalista escuro */
 :root {
-  /* Identidade v1.6: fundo grafite profundo, dias em grafite, azul-claro da marca. Verde/vermelho = dinheiro. */
-  --bg: #17191C;          /* fundo */
-  --s1: #1E2227;          /* superfícies secundárias (painéis, menus) */
-  --s2: #25292E;          /* quadrados do calendário e grupos */
-  --s3: #30353B;          /* realce / controles */
-  --line: #363C43;        /* divisórias */
-  --text: #E8EBEF;
-  --text-2: #AAB2BD;
-  --text-3: #8C949F;
+  /* Identidade v1.7 (referência: Samsung Calendar): fundo preto, dias em cinza-escuro NEUTRO,
+     azul-claro só em pequenos detalhes de identidade/seleção. Verde/vermelho = dinheiro. */
+  --bg: #000000;          /* fundo */
+  --s1: #141414;          /* superfícies (painéis, menus, folhas) */
+  --s2: #1E1E1E;          /* grupos e cartões dentro das folhas */
+  --s3: #2B2B2B;          /* realce / controles */
+  --line: #2C2C2C;        /* divisórias */
+  --cell: #151515;        /* quadrados dos dias (celular) */
+  --cell-out: #0D0D0D;    /* dias de outro mês */
+  --text: #F0F0F0;
+  --text-2: #AFAFAF;
+  --text-3: #7A7A7A;
   --green: #55C98B;       /* receitas, economia, positivo */
   --red: #E47777;         /* despesas, negativo */
   --accent: #A9D4F5;      /* azul-claro da marca */
@@ -69,7 +72,7 @@ body.selecting .grid-wrap { touch-action: none; }
 .cell.sel { background: var(--s1); border-radius: 12px; border-top-color: transparent; }
 .cell.sel + .cell, .cell.picked + .cell { border-top-color: var(--line); }
 .cell .num { font-size: 15px; font-weight: 500; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; }
-.cell.out .num { color: #2e2e31; }
+.cell.out .num { color: #4F4F4F; }
 .cell.wkend .num { color: var(--text-2); }
 .cell.hol .num { color: var(--orange); }
 .cell.today .num { background: var(--accent); color: #fff; font-weight: 700; }
@@ -81,7 +84,7 @@ body.selecting .grid-wrap { touch-action: none; }
 .cell .val.zero { color: var(--text-3); }
 .cell .val.still { opacity: .4; font-weight: 500; }
 .cell .flag { position: absolute; top: 7px; right: calc(50% - 22px); width: 5px; height: 5px; border-radius: 50%; background: var(--orange); }
-.cell.picked { background: rgba(10, 132, 255, .16); border-radius: 12px; border-top-color: transparent; }
+.cell.picked { background: #262626; border-radius: 12px; border-top-color: transparent; }
 .cell.picked .num { color: #fff; }
 
 /* Resumo */
@@ -440,14 +443,14 @@ b.warn { color: var(--orange); }
 .cell.today .num, .fab, .primary-btn, .act.primary span.ic, .pick.on .box, .dialog-actions button.primary, .step-top b { color: var(--accent-ink); }
 .primary-btn.ghost { color: var(--text); }
 .switch:checked { background: var(--accent); }
-.switch::after { background: #f3f4f6; }
+.switch::after { background: #F2F2F2; }
 .chip.on, .dialog-body .chip.on { background: var(--accent-soft); color: var(--accent); }
 .segmented button.on { color: var(--text); }
 .quick button.ok { background: var(--accent-soft); color: var(--accent); }
 .checked-note { color: var(--accent); }
 .st-paid { color: var(--accent); }
 .cell.hol .num { color: var(--accent); }
-.cell.out .num { color: #55575d; }
+.cell.out .num { color: #4F4F4F; }
 .cell.picked { background: var(--accent-soft); }
 .cell.picked .num { color: var(--text); }
 .cell.sel { background: var(--s2); }
@@ -613,14 +616,20 @@ body.cal-exp .summary-line { padding-right: 78px; }
 #accLabel:empty { display: none; }
 
 
-/* =================== v1.6 — quadrados grafite =================== */
-.grid { gap: 2px; border: 0 !important; background: transparent; border-radius: 0; }
-.cell, .cell:nth-child(7n) { background: var(--s2); border: 0 !important; border-radius: 6px !important; }
-.cell.out { background: #1C1F23; }
-.cell.out .num { color: #5A616A; }
-.cell:active { background: var(--s3); }
-.cell.sel { background: var(--s3); box-shadow: inset 0 0 0 1.5px var(--accent); }
-.cell.picked { background: rgba(169, 212, 245, .22); }
+/* =================== v1.7 — fundo preto e quadrados cinza neutros (Samsung) =================== */
+.grid { gap: 3px; border: 0 !important; background: transparent; border-radius: 0; }
+.cell, .cell:nth-child(7n) { background: var(--cell); border: 0 !important; border-radius: 5px !important; }
+.cell.out { background: var(--cell-out); }
+.cell.out .num { color: #4F4F4F; }
+.cell:active { background: #232323; }
+/* dia selecionado: só um contorno fino neutro, sem pintar o quadrado */
+.cell.sel { background: var(--cell); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, .34); }
+.cell.out.sel { background: var(--cell-out); }
+/* hoje: número num pequeno selo azul-claro (único detalhe de cor do dia) */
+.cell.today .num { background: var(--accent); color: var(--accent-ink); border-radius: 8px; font-weight: 700; }
+/* seleção de vários dias: fundo cinza um pouco mais claro + contorno azul fino */
+.cell.picked { background: #262626; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.cell.picked .num { color: var(--text); }
 .weekdays div { color: var(--text-2); }
 .topbar { background: var(--bg); }
 .summary-line { border-top-color: var(--line); }
@@ -633,8 +642,11 @@ body.cal-exp .summary-line { padding-right: 78px; }
 .item + .item, .card-row, .scope, .pick, .alert-row, .hist, .tagbar, .kv { border-color: var(--line); }
 .cell .bud.s-pending { box-shadow: inset 0 0 0 1.5px var(--orange); background: transparent !important; }
 @media (min-width: 1100px) {
-  .grid { gap: 3px; }
-  .cell { border-radius: 8px !important; }
+  :root { --cell: #181818; --cell-out: #101010; }
+  .grid { gap: 4px; }
+  .cell { border-radius: 7px !important; }
+  .cell:hover { background: #1F1F1F; }
+  .cell.out:hover { background: #141414; }
 }
 
 /* PC: calendário ~75% e painel lateral ~25% */
@@ -647,3 +659,29 @@ body.cal-exp .summary-line { padding-right: 78px; }
   .day-hint b { display: block; color: var(--text); font-size: 17px; margin-bottom: 4px; }
 }
 .hist-det { display: block; font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.45; }
+
+/* =================== v1.7 — modo limpo, painel do dia e detalhes neutros =================== */
+/* Tags desligadas: cada dia mostra só o número e o saldo acumulado no rodapé */
+.grid.clean .cell .val { font-size: 12px; }
+@media (min-width: 1100px) { .grid.clean .cell .val { font-size: 15px; } }
+/* identificação das tags: só uma barrinha fina ao lado de cada lançamento */
+.cell .ln { color: var(--text-2); }
+.cell .ln.done b { color: var(--text-3); }
+/* alça de expansão visível sobre o preto, sem chamar atenção */
+.cal-handle i { background: #333; }
+.cal-handle:active i, .cal-handle:hover i { background: #555; }
+/* botão de adicionar: cinza-escuro neutro com o + em azul-claro (como o "Adic." do Samsung) */
+.fab { background: #232323; color: var(--accent); box-shadow: inset 0 0 0 1px #343434; }
+.fab:active { background: #2E2E2E; }
+@media (min-width: 1100px) {
+  .new-btn { background: #1E1E1E; color: var(--text); box-shadow: inset 0 0 0 1px #333; }
+  .new-btn svg { color: var(--accent); }
+  .new-btn:hover { background: #262626; filter: none; }
+}
+/* painel do dia */
+.balance .cur small { color: var(--text); }
+.reveal { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 13px 4px; margin-top: 4px; border-top: 1px solid var(--line); color: var(--accent); font-size: 14px; font-weight: 500; }
+.reveal:hover { filter: brightness(1.15); }
+.section-label + .reveal, .item + .reveal { margin-top: 6px; }
+/* superfícies neutras (sem tom azulado) */
+#daySheet.docked, #daySheet.docked.on { border-color: #262626; }

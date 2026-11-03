@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.6.0';
+export const APP_VERSION = '1.7.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -271,10 +271,16 @@ function measureCal() {
   const grid = $('#grid'); if (!grid) return;
   const vh = window.innerHeight;
   const top = grid.getBoundingClientRect().top + window.scrollY;
-  const reserve = isWide() ? 64 : 92; // alça + linha de saldo + respiro
-  const fill = Math.floor((vh - top - reserve) / CAL.rows);
+  // espaço abaixo da grade: alça + linha de saldo + margem; inclui as frestas entre os quadrados,
+  // para o mês caber inteiro na tela sem rolar (e o cabeçalho dos dias da semana nunca ficar escondido)
+  const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
+  const reserve = isWide()
+    ? Math.max(44, $('#summary').getBoundingClientRect().height) + (parseFloat(getComputedStyle($('main')).paddingBottom) || 0) + 6
+    : 92;
+  const fill = Math.floor((vh - top - reserve - gap * (CAL.rows - 1)) / CAL.rows);
   CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
-  CAL.expanded = Math.max(CAL.compact + 24, isWide() ? Math.min(fill, 150) : fill); // PC: dias com altura máxima confortável
+  // PC: dias com altura máxima confortável (e o mês inteiro cabendo na tela); celular: expandido preenche a tela
+  CAL.expanded = isWide() ? Math.max(84, Math.min(fill, 150)) : Math.max(CAL.compact + 24, fill);
   // quantas linhas de lançamento cabem no dia expandido (o conteúdo é montado uma vez só)
   const lineH = isWide() ? 18 : 15;
   CAL.lines = Math.max(1, Math.floor((CAL.expanded - (isWide() ? 64 : 50)) / lineH));
@@ -283,7 +289,7 @@ function measureCal() {
 function applyCellHeight(h) {
   $('#grid').style.setProperty('--cell-h', h + 'px');
   // as linhas aparecem quando a célula já ganhou espaço suficiente
-  document.body.classList.toggle('cal-exp', h > CAL.compact + 14);
+  document.body.classList.toggle('cal-exp', isWide() || h > CAL.compact + 14);
 }
 function setExpanded(open) {
   S.settings.calExpanded = !!open;
@@ -380,8 +386,11 @@ function renderGrid(anim) {
   const hidden = new Set(s.hiddenTags);
   const maxLines = CAL.lines;
   const start = addDays(first, -lead);
-  const cm = calendarMeta();
+  // Tags ligadas = modo detalhado; desligadas = modo limpo (só número do dia e saldo acumulado).
+  const detail = detailed();
+  const cm = detail ? calendarMeta() : null;
   const bud = cm ? F.dailyBudget(cm, first, iso(y, m, month.days.length), budgetCtx()) : null;
+  $('#grid').classList.toggle('clean', !detail);
   let html = '';
   for (let i = 0; i < total; i++) {
     const date = addDays(start, i);
@@ -397,24 +406,25 @@ function renderGrid(anim) {
     if (!inMonth) { html += `<button class="${cls}" data-date="${date}"><span class="num">${n}</span></button>`; continue; }
     const day = month.days[n - 1];
     let inner = `<span class="num">${n}</span>`;
-    if (day.items.some(it => it.status === 'pending' && accVisible(it))) inner += '<span class="flag"></span>';
-    if (maxLines) inner += dayLines(day, maxLines);
-    if (s.showTags) {
+    const mv = dayMovement(day);
+    if (detail) {
+      // modo detalhado: lançamentos (tag, descrição e valor) com a identificação discreta de cada tag
+      if (day.items.some(it => it.status === 'pending' && accVisible(it))) inner += '<span class="flag"></span>';
+      if (maxLines) inner += dayLines(day, maxLines);
       const colors = new Map();
       for (const it of day.items) {
-        if (!it.tagId || hidden.has(it.tagId) || !countsPlanned(it) || !accVisible(it)) continue;
-        if ((it.kind === 'income' && !s.showIncome) || (it.kind === 'expense' && !s.showExpense)) continue;
+        if (!it.tagId || !countsPlanned(it) || !accVisible(it) || !passesFilters(it)) continue;
         for (const tid of it.splits ? it.splits.map(p => p.tagId) : [it.tagId]) {
           const tg = tag(tid);
           if (tg && !hidden.has(tg.id)) colors.set(tg.id, tagColor(tg));
         }
       }
       inner += `<span class="tags">${[...colors.values()].slice(0, 4).map(c => `<i style="background:${c}"></i>`).join('')}</span>`;
+      const b = bud && bud.get(date);
+      if (b) inner += `<span class="bud s-${b.status}" style="background:${b.status === 'over' ? cm.colorBad || 'var(--red)' : cm.colorGood || 'var(--green)'};--good:${cm.colorGood || 'var(--green)'}"></span>`;
+      if (s.showMovement && mv !== null) inner += `<span class="mv">${compact(mv)}</span>`;
     }
-    const b = bud && bud.get(date);
-    if (b) inner += `<span class="bud s-${b.status}" style="background:${b.status === 'over' ? cm.colorBad || 'var(--red)' : cm.colorGood || 'var(--green)'};--good:${cm.colorGood || 'var(--green)'}"></span>`;
-    const mv = dayMovement(day);
-    if (s.showMovement && mv !== null) inner += `<span class="mv">${compact(mv)}</span>`;
+    // modo limpo e detalhado: o saldo acumulado do dia, no rodapé (mesmo cálculo nos dois modos)
     const v = cellValue(day);
     if (v !== null) inner += `<span class="val ${v ? sgnCls(v) : 'zero'}${mv === null ? ' still' : ''}">${compact(v)}</span>`;
     html += `<button class="${cls}" data-date="${date}">${inner}</button>`;
@@ -425,14 +435,12 @@ function renderGrid(anim) {
   renderSummary();
 }
 
-/** Lançamentos escritos dentro do dia (modo expandido/PC). Respeita filtros; não altera nada. */
+/** Lançamentos escritos dentro do dia (modo detalhado, expandido/PC). Respeita os filtros; não altera nada. */
 function dayLines(day, max) {
   const s = S.settings;
-  // Filtros independentes: Receitas/Despesas decidem QUAIS lançamentos aparecem;
-  // Tags decide só se o NOME e a COR da tag aparecem. Nada disso mexe nos cálculos.
+  // Receitas/Despesas e tags escondidas decidem QUAIS lançamentos aparecem. Nada disso mexe nos cálculos.
   const list = day.items.filter(it => countsPlanned(it) && accVisible(it) &&
-    ((it.kind === 'income' && s.showIncome) || (it.kind === 'expense' && s.showExpense) ||
-     (isInternal(it) && s.showTransfers && it.kind === 'transfer')));
+    (it.kind === 'income' || it.kind === 'expense' || (it.kind === 'transfer' && s.showTransfers)) && passesFilters(it));
   if (!list.length) return '';
   const order = { income: 0, transfer: 1, expense: 2 };
   list.sort((a, b) => (order[a.kind] - order[b.kind]) || (b.amount - a.amount));
@@ -440,11 +448,12 @@ function dayLines(day, max) {
   const show = list.length > max ? list.slice(0, max >= 2 ? max - 1 : 1) : list;
   const rest = list.length - show.length;
   const line = it => {
-    const tg = visibleTag(it.tagId);
-    const color = tg ? tagColor(tg) : it.kind === 'income' ? 'var(--green)' : it.kind === 'expense' ? 'var(--red)' : 'var(--accent)';
+    const tg = tag(it.tagId);
     const name = itemTitle(it);
     const sg = itemSign(it);
-    return `<span class="ln${it.status === 'paid' ? ' done' : ''}"><i style="background:${color}"></i><b>${esc(name)}</b><em class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
+    // dica ao passar o mouse (PC): tag · descrição · valor
+    const tip = [tg && tg.name !== name ? tg.name : null, name, `${sg}${money(it.amount)}`].filter(Boolean).join(' · ');
+    return `<span class="ln${it.status === 'paid' ? ' done' : ''}" title="${esc(tip)}"><i style="background:${itemColor(it)}"></i><b>${esc(name)}</b><em class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
   };
   return `<span class="lns">${show.map(line).join('')}${rest ? `<span class="ln more">+${rest}</span>` : ''}</span>`;
 }
@@ -532,24 +541,38 @@ function statusLabel(it) {
   return STATUS[it.status];
 }
 const KIND_NAME = { income: 'Receita', expense: 'Despesa', transfer: 'Transferência', reserve: 'Guardado no cofrinho', release: 'Retirado do cofrinho' };
+/** Nome real do lançamento (descrição; sem descrição, o nome da tag). Nunca depende dos filtros de exibição. */
 function itemTitle(it) {
+  if (it.title) return it.title;
   const t = tag(it.tagId);
-  // com a tag oculta, o nome dela não aparece — nem quando a descrição é igual ao nome da tag
-  if (it.title && !(t && !visibleTag(t.id) && it.title === t.name)) return it.title;
-  if (visibleTag(it.tagId)) return t.name;
+  if (t) return t.name;
   if (it.kind === 'reserve') return 'Guardado';
   if (it.kind === 'release') return 'Retirado';
   return KIND_NAME[it.kind];
 }
-/** Tag visível = chave "Tags" ligada e essa tag não escondida. Esconder muda só a exibição. */
-function visibleTag(id) {
-  if (!S.settings.showTags || !id) return null;
-  if ((S.settings.hiddenTags || []).includes(id)) return null;
-  return tag(id);
+/**
+ * Modo de visualização do calendário (só exibição — saldos, metas e relatórios não mudam):
+ *  - Tags ligadas  → modo detalhado: lançamentos dentro dos dias, com tag, descrição e valor;
+ *  - Tags desligadas → modo limpo: cada dia mostra só o número e o saldo acumulado.
+ */
+const detailed = () => !!S.settings.showTags;
+/** Tag escondida individualmente (Configurações › Tags): os lançamentos dela saem das listas do calendário. */
+function tagShown(it) {
+  const hidden = S.settings.hiddenTags || [];
+  if (!hidden.length) return true;
+  const ids = it.splits ? it.splits.map(p => p.tagId) : [it.tagId];
+  return ids.some(id => !id || !hidden.includes(id));
+}
+/** Filtros de exibição Receitas / Despesas / tags escondidas: decidem só o que aparece nas listas. */
+function passesFilters(it) {
+  const s = S.settings;
+  if (it.kind === 'income' && !s.showIncome) return false;
+  if (it.kind === 'expense' && !s.showExpense) return false;
+  return tagShown(it);
 }
 function itemColor(it) {
   if (it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release') return 'var(--accent)';
-  const t = visibleTag(it.tagId);
+  const t = tag(it.tagId);
   return t ? tagColor(t) : it.kind === 'income' ? 'var(--green)' : 'var(--red)';
 }
 const isInternal = it => it.kind === 'transfer' || it.kind === 'reserve' || it.kind === 'release';
@@ -569,7 +592,7 @@ function itemRow(it, { quick = false } = {}) {
   else if (it.kind === 'reserve' || it.kind === 'release') parts.push(`${it.kind === 'reserve' ? 'para' : 'de'} ${esc((S.piggies.get(it.piggyId) || {}).name || 'cofrinho')}`);
   else if (multiAcc()) parts.push(esc(accName(it.accountId)));
   if (it.splits) parts.push(`dividido em ${it.splits.length}`);
-  else if (visibleTag(it.tagId) && tg.name !== it.title) parts.push(esc(tg.name));
+  else if (tg && it.title && tg.name !== it.title) parts.push(esc(tg.name));
   if (it.status === 'moved') parts.push(`para ${dm(it.movedTo)}`);
   else if (it.moved) parts.push(`de ${dm(it.baseDate)}`);
   if (it.status !== 'planned') parts.push(`<span class="st st-${it.status}">${statusLabel(it)}</span>`);
@@ -590,7 +613,7 @@ function renderDay(date) {
   if (isWide() && !S.dayChosen) {
     $('#dayTitle').textContent = '';
     $('#daySub').textContent = '';
-    $('#dayBody').innerHTML = '<div class="day-hint"><b>Selecione uma data</b>Clique em um dia do calendário para ver os lançamentos, valores e tags daquela data.</div>';
+    $('#dayBody').innerHTML = '<div class="day-hint"><b>Selecione uma data</b>Clique em um dia do calendário para ver o saldo e os lançamentos daquela data.</div>';
     $('#dayFoot').innerHTML = '';
     $('#btnDaySelect').hidden = true;
     return;
@@ -601,23 +624,37 @@ function renderDay(date) {
   const t = today();
   const hol = S.isHoliday(date);
   const check = S.checks.get(date);
-  $('#dayTitle').textContent = `${cap(WEEKDAYS_LONG[w])}, ${+date.slice(8)} de ${MONTHS[+date.slice(5, 7) - 1].toLowerCase()}`;
+  $('#dayTitle').textContent = `${cap(WEEKDAYS_LONG[w].replace('-feira', ''))}, ${+date.slice(8)} de ${MONTHS[+date.slice(5, 7) - 1].toLowerCase()}`;
   const sub = hol || (w === 0 || w === 6 ? 'Fim de semana' : 'Dia útil');
   $('#daySub').innerHTML = esc(sub) + (check ? ` · <span class="checked-note">${icon('check')}Conferido${check.noExpenses ? ' sem gastos' : ''}</span>` : '');
 
   const checking = S.checking === date;
-  const inc = d.items.filter(i => i.kind === 'income' && accVisible(i));
-  const exp = d.items.filter(i => i.kind === 'expense' && accVisible(i));
-  const internal = S.settings.showTransfers ? d.items.filter(i => isInternal(i) && accVisible(i)) : [];
+  // Mesmo comportamento da grade: tags ligadas = lista detalhada; desligadas = só o saldo do dia.
+  // Os lançamentos continuam a um toque ("Mostrar lançamentos") para pagar, editar ou conferir.
+  const reveal = S.dayReveal === date;
+  const detail = detailed() || checking || reveal;
+  const all = d.items.filter(i => accVisible(i) && (!isInternal(i) || S.settings.showTransfers));
+  const list = checking || reveal ? all : all.filter(passesFilters);
+  const inc = list.filter(i => i.kind === 'income');
+  const exp = list.filter(i => i.kind === 'expense');
+  const internal = list.filter(isInternal);
+  const basisReal = S.settings.basis === 'realized';
   let html = `<div class="balance">
-    <div><small>Acumulado previsto</small><b class="${sgnCls(d.cumNet)}">${signed(d.cumNet)}</b></div>
-    <div><small>Realizado</small><b class="${sgnCls(d.cumNetReal)}">${signed(d.cumNetReal)}</b></div>
+    <div class="${basisReal ? '' : 'cur'}"><small>Saldo previsto</small><b class="${sgnCls(d.cumNet)}">${signed(d.cumNet)}</b></div>
+    <div class="${basisReal ? 'cur' : ''}"><small>Saldo realizado</small><b class="${sgnCls(d.cumNetReal)}">${signed(d.cumNetReal)}</b></div>
   </div>`;
-  if (!d.items.filter(i => accVisible(i) && (!isInternal(i) || S.settings.showTransfers)).length) html += `<div class="empty">${checking ? 'Nenhum lançamento previsto. Adicione um gasto ou conclua como dia sem gastos.' : 'Nenhum lançamento.'}</div>`;
-  if (inc.length) html += `<div class="section-label"><span>RECEITAS</span><span>${money(d.inc)}</span></div>${inc.map(i => itemRow(i, { quick: checking })).join('')}`;
-  if (exp.length) html += `<div class="section-label"><span>DESPESAS</span><span>${money(d.exp)}</span></div>${exp.map(i => itemRow(i, { quick: checking })).join('')}`;
-  if (internal.length) html += `<div class="section-label"><span>ENTRE CONTAS E COFRINHOS</span></div>${internal.map(i => itemRow(i)).join('')}`;
-  const cm = calendarMeta();
+  if (!all.length) html += `<div class="empty">${checking ? 'Nenhum lançamento previsto. Adicione um gasto ou conclua como dia sem gastos.' : 'Nenhum lançamento.'}</div>`;
+  else if (!detail) {
+    html += `<button type="button" class="reveal" data-reveal>Mostrar lançamentos (${all.length})</button>`;
+  } else {
+    if (inc.length) html += `<div class="section-label"><span>RECEITAS</span><span>${money(d.inc)}</span></div>${inc.map(i => itemRow(i, { quick: checking })).join('')}`;
+    if (exp.length) html += `<div class="section-label"><span>DESPESAS</span><span>${money(d.exp)}</span></div>${exp.map(i => itemRow(i, { quick: checking })).join('')}`;
+    if (internal.length) html += `<div class="section-label"><span>ENTRE CONTAS E COFRINHOS</span></div>${internal.map(i => itemRow(i)).join('')}`;
+    const off = all.length - list.length;
+    if (off) html += `<button type="button" class="reveal" data-reveal>${off === 1 ? '1 lançamento oculto' : `${off} lançamentos ocultos`} pelos filtros · Mostrar</button>`;
+    else if (reveal && !checking) html += `<button type="button" class="reveal" data-hide>Ocultar lançamentos</button>`;
+  }
+  const cm = detail ? calendarMeta() : null;
   const b = cm && F.dailyBudget(cm, date, date, budgetCtx()).get(date);
   if (b) {
     // orçamento previsto, gasto realizado, gasto pendente e economia efetiva — separados
@@ -637,12 +674,13 @@ function renderDay(date) {
 }
 
 function openDay(date) {
+  if (S.dayReveal && S.dayReveal !== date) S.dayReveal = null;
   S.selected = date;
   S.dayChosen = true;
   if (S.checking && S.checking !== date) S.checking = null;
   renderDay(date);
   if (isWide()) setDock(true);
-  else if (!isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; renderGrid(); });
+  else if (!isOpen($('#daySheet'))) openLayer($('#daySheet'), () => { S.checking = null; S.dayReveal = null; renderGrid(); });
   renderGrid();
 }
 
@@ -659,7 +697,7 @@ function openActions(key, date) {
     : it.kind === 'income' ? `Entra em ${esc(accName(it.accountId))}${it.origin ? ` · origem ${esc(it.origin)}` : ''}`
     : it.kind === 'expense' ? `Sai de ${esc(accName(it.accountId))}` : esc(accName(it.accountId));
   const splits = it.splits ? it.splits.map(p => `${esc((tag(p.tagId) || {}).name || 'Sem tag')} ${money(p.amount)}`).join(' + ') : null;
-  const sub = [where, splits || (visibleTag(it.tagId) && tg.name !== it.title ? esc(tg.name) : null), it.recurring ? RULES[e.rule.type] : null, statusLabel(it)].filter(Boolean).join(' · ');
+  const sub = [where, splits || (tg && it.title && tg.name !== it.title ? esc(tg.name) : null), it.recurring ? RULES[e.rule.type] : null, statusLabel(it)].filter(Boolean).join(' · ');
   let acts = '';
   if (it.status === 'moved') {
     acts = ACT('unmove', 'Desfazer adiamento', 'undo') + ACT('goto', `Ver ${dm(it.movedTo)}`, 'calendar');
@@ -1581,6 +1619,9 @@ function bind() {
   $('#btnDayAdd').onclick = () => openForm({ date: S.selected, paid: S.checking ? true : undefined });
   $('#btnDaySelect').onclick = async () => { const d = S.selected; if (!isWide()) await closeTop(); enterSelect(d); };
   $('#dayBody').addEventListener('click', e => {
+    // mostrar/ocultar os lançamentos do dia (só exibição)
+    if (e.target.closest('[data-reveal]')) { S.dayReveal = S.selected; renderDay(S.selected); return; }
+    if (e.target.closest('[data-hide]')) { S.dayReveal = null; renderDay(S.selected); return; }
     const row = e.target.closest('.item'); if (!row) return;
     const q = e.target.closest('[data-q]');
     const it = findItem(row.dataset.key, row.dataset.date);
@@ -1608,14 +1649,17 @@ function bind() {
     saveSettings();
     if (k === 'carry' || k === 'holOptional') { rebuild(); if (k === 'holOptional') syncDrawer(); }
     if (k === 'mondayFirst') renderHeader();
+    if (k === 'showTags') S.dayReveal = null;
     renderGrid();
-    if (k === 'showTransfers' && S.selected && dayVisible()) renderDay(S.selected);
+    // a grade e o painel do dia seguem a mesma exibição
+    if (S.selected && dayVisible()) renderDay(S.selected);
   }));
   $('#basisSeg').onclick = e => {
     const b = e.target.closest('button'); if (!b) return;
     S.settings.basis = b.dataset.basis; saveSettings();
     $$('#basisSeg button').forEach(x => x.classList.toggle('on', x === b));
     renderGrid();
+    if (S.selected && dayVisible()) renderDay(S.selected);
   };
   $('#startDate').addEventListener('change', e => { S.settings.startDate = e.target.value || null; saveSettings(); rebuild(); renderGrid(); });
   $('#holState').addEventListener('change', e => { S.settings.holState = e.target.value; saveSettings(); rebuild(); refresh(); syncDrawer(); });
@@ -1649,6 +1693,7 @@ function bind() {
     S.settings.hiddenTags = [...set];
     e.target.closest('.tag-row').classList.toggle('off', !e.target.checked);
     saveSettings(); renderGrid();
+    if (S.selected && dayVisible()) renderDay(S.selected);
   });
   $('#btnSample').onclick = loadSample;
   $('#accFilter').addEventListener('change', e => {
