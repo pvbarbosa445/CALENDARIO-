@@ -18,6 +18,7 @@
     <div class="bar-normal">
       <button class="icon-btn" id="btnMenu" aria-label="Menu" data-icon="dots"></button>
       <button class="month-title" id="btnToday" aria-label="Voltar para hoje"><span id="monthName"></span><span id="yearName"></span></button>
+      <button class="icon-btn bell" id="btnAlerts" aria-label="Alertas" hidden><span data-icon="bell"></span><i id="alertBadge"></i></button>
       <button class="icon-btn" id="btnPrev" aria-label="Mês anterior" data-icon="left"></button>
       <button class="icon-btn" id="btnNext" aria-label="Próximo mês" data-icon="right"></button>
     </div>
@@ -36,6 +37,7 @@
       <span class="summary-line"><span id="summaryLabel"></span><b id="summaryValue"></b></span>
       <span class="summary-body" id="summaryBody"></span>
     </button>
+    <div id="panels"></div>
   </main>
 
   <button class="fab" id="fab" aria-label="Novo lançamento" data-icon="plus"></button>
@@ -47,6 +49,14 @@
   <aside class="drawer" id="drawer" aria-hidden="true">
     <div class="drawer-head"><span>Exibição</span><button class="icon-btn" data-close aria-label="Fechar" data-icon="close"></button></div>
     <div class="drawer-body">
+      <div class="group nav">
+        <button class="row" data-page="accounts"><span class="ic" data-icon="wallet"></span><span>Contas</span><b id="navBalance" class="muted"></b></button>
+        <button class="row" data-page="piggies"><span class="ic" data-icon="piggy"></span><span>Cofrinhos</span></button>
+        <button class="row" data-page="metas"><span class="ic" data-icon="target"></span><span>Metas e orçamentos</span></button>
+        <button class="row" data-page="reports"><span class="ic" data-icon="chart"></span><span>Relatórios</span></button>
+        <button class="row" data-page="history"><span class="ic" data-icon="history"></span><span>Histórico</span></button>
+      </div>
+      <div class="group-title">Exibição</div>
       <div class="group">
         <label class="row"><span class="dot inc"></span><span>Receitas</span><input type="checkbox" class="switch" data-setting="showIncome"></label>
         <label class="row"><span class="dot exp"></span><span>Despesas</span><input type="checkbox" class="switch" data-setting="showExpense"></label>
@@ -54,6 +64,11 @@
       </div>
       <div class="segmented" id="basisSeg"><button data-basis="planned">Previsto</button><button data-basis="realized">Realizado</button></div>
 
+      <div id="accFilterBox" hidden>
+        <div class="group-title">Contas no calendário</div>
+        <div class="group" id="accFilter"></div>
+        <div class="group"><label class="row"><span>Mostrar transferências e cofrinhos</span><input type="checkbox" class="switch" data-setting="showTransfers"></label></div>
+      </div>
       <div class="group-title">Tags <button class="link-btn" id="btnNewTag">Nova</button></div>
       <div class="group" id="tagList"></div>
 
@@ -63,9 +78,17 @@
           <label class="row"><span>Mostrar movimento do dia</span><input type="checkbox" class="switch" data-setting="showMovement"></label>
           <label class="row"><span>Semana começa na segunda</span><input type="checkbox" class="switch" data-setting="mondayFirst"></label>
           <label class="row"><span>Acumular meses anteriores</span><input type="checkbox" class="switch" data-setting="carry"></label>
-          <label class="row field carry-only"><span>Saldo inicial</span><input type="text" inputmode="decimal" id="initialBalance" placeholder="0,00"></label>
           <label class="row field carry-only"><span>A partir de</span><input type="date" id="startDate"></label>
         </div>
+        <p class="hint carry-only">O saldo inicial vem do saldo inicial de cada conta.</p>
+      </details>
+      <details class="more">
+        <summary>Painéis da tela inicial</summary>
+        <div class="group" id="panelCfg"></div>
+      </details>
+      <details class="more">
+        <summary>Alertas</summary>
+        <div class="group" id="alertCfg"></div>
       </details>
       <details class="more">
         <summary>Feriados</summary>
@@ -80,9 +103,13 @@
       <details class="more">
         <summary>Dados</summary>
         <div class="group">
+          <button class="row action" id="btnExport">Exportar backup</button>
+          <button class="row action" id="btnImport">Restaurar backup</button>
+          <button class="row action" id="btnInstall" hidden>Instalar app</button>
           <button class="row action" id="btnSample">Carregar exemplo</button>
           <button class="row action danger" id="btnWipe">Apagar todos os dados</button>
         </div>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
         <p class="hint" id="storageInfo"></p>
       </details>
       <p class="hint center" id="appVersion"></p>
@@ -131,15 +158,24 @@
         <button type="submit" class="text-btn strong">Salvar</button>
       </div>
       <div class="sheet-body">
-        <div class="segmented kind" id="kindSeg"><button type="button" data-kind="expense">Despesa</button><button type="button" data-kind="income">Receita</button></div>
+        <div class="segmented kind" id="kindSeg"><button type="button" data-kind="expense">Despesa</button><button type="button" data-kind="income">Receita</button><button type="button" data-kind="transfer">Transferência</button></div>
         <div class="amount-wrap"><span>R$</span><input id="fAmount" type="text" inputmode="decimal" placeholder="0,00" autocomplete="off"></div>
         <div class="group">
           <label class="row field"><span>Descrição</span><input id="fTitle" type="text" placeholder="Opcional" maxlength="60"></label>
-          <label class="row field"><span>Tag</span><select id="fTag"></select></label>
+          <label class="row field" id="fAccountRow"><span id="fAccountLabel">Conta</span><select id="fAccount"></select></label>
+          <label class="row field" id="fToRow"><span>Para</span><select id="fTo"></select></label>
+          <label class="row field" id="fOriginRow"><span>Origem</span><input id="fOrigin" type="text" list="originList" placeholder="Ex.: Salário CLT, iFood" maxlength="40"></label>
+          <label class="row field" id="fTagRow"><span>Tag</span><select id="fTag"></select></label>
+          <label class="row field" id="fFeeRow"><span>Taxa (opcional)</span><input id="fFee" type="text" inputmode="decimal" placeholder="0,00"></label>
           <label class="row field"><span id="fDateLabel">Data</span><input id="fDate" type="date"></label>
           <label class="row" id="fPaidRow"><span id="fPaidLabel">Pago</span><input id="fPaid" type="checkbox" class="switch"></label>
         </div>
 
+        <div id="fSplitBox">
+          <label class="row-link"><span>Dividir entre tags</span><input id="fSplit" type="checkbox" class="switch"></label>
+          <div class="group" id="fSplits"></div>
+        </div>
+        <datalist id="originList"></datalist>
         <button type="button" class="row-link" id="fRuleToggle"><span>Repetição</span><span class="muted" id="fRuleSummary"></span><span class="chev" data-icon="right"></span></button>
         <div class="group rule-box" id="fRuleBox">
           <label class="row field"><span>Repetir</span><select id="fRule"></select></label>
