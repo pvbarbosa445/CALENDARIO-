@@ -58,7 +58,8 @@ function rawDates(rule, from, to, isHoliday) {
         if (isBusinessDay(s, isHoliday, !!rule.saturday)) biz.push(s);
       }
       const n = +rule.n || 1;
-      const pick = n < 0 ? biz[biz.length + n] : biz[n - 1];
+      // se o mês tiver menos dias úteis que o pedido (ex.: 20º), usa o último dia útil — a ocorrência nunca some
+      const pick = n < 0 ? biz[biz.length + n] : (biz[n - 1] || biz[biz.length - 1]);
       if (pick && pick >= from && pick <= to) out.push(pick);
       ({ y, m } = addMonths(y, m, 1));
     }

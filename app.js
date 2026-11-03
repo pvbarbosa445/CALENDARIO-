@@ -1,14 +1,14 @@
 // Calendário Financeiro — interface (Etapa 2)
 import * as db from './db.js';
 import { createCalculator, RULES, attrsAt, occKey } from './engine.js';
-import { makeHolidayLookup, LOCALES } from './holidays.js';
+import { makeHolidayLookup, LOCALES, holidayNames } from './holidays.js';
 import * as ops from './ops.js';
 import * as F from './finance.js';
 import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -44,10 +44,10 @@ const sgnCls = v => (v > 0 ? 'pos' : v < 0 ? 'neg' : 'muted');
 
 // ---------- Estado ----------
 const DEFAULTS = {
-  showIncome: true, showExpense: true, showTags: true, hiddenTags: [], showMovement: false,
+  showIncome: true, showExpense: true, showTags: false, hiddenTags: [], showMovement: false,
   showTransfers: true, hiddenAccounts: [], defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
-  mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [],
+  mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
   summaryOpen: false,
 };
 const S = {
@@ -72,7 +72,7 @@ function tagColor(t) {
   for (const m of S.metas.values()) {
     if (m.archived || !m.tintTags || !(m.tagIds || []).includes(t.id)) continue;
     const i = m.tagIds.indexOf(t.id);
-    return shade(m.color || '#0a84ff', [0, 0.28, -0.22, 0.45, -0.38, 0.6][i % 6]);
+    return shade(m.color || '#8cb6e4', [0, 0.28, -0.22, 0.45, -0.38, 0.6][i % 6]);
   }
   return t.color;
 }
@@ -85,7 +85,7 @@ const tagsSorted = () => [...S.tags.values()].sort((a, b) => (a.order ?? 0) - (b
 
 function rebuild() {
   const s = S.settings;
-  S.isHoliday = makeHolidayLookup({ state: s.holState, city: s.holCity, optional: s.holOptional, custom: s.customHolidays });
+  S.isHoliday = makeHolidayLookup({ state: s.holState, city: s.holCity, optional: s.holOptional, custom: s.customHolidays, disabled: s.disabledHolidays });
   S.data = { entries: [...S.entries.values()], overrides: S.overrides, isHoliday: S.isHoliday, defaultAccount: s.defaultAccount };
   S.set = visibleAccounts();
   const initial = [...S.set].reduce((t, id) => t + ((S.accounts.get(id) || {}).initialBalance || 0), 0);
@@ -93,9 +93,24 @@ function rebuild() {
 }
 
 let saveTimer;
+const SETTING_NAMES = {
+  showIncome: 'Exibir receitas', showExpense: 'Exibir despesas', showTags: 'Exibir tags', hiddenTags: 'Tags visíveis', showMovement: 'Movimento do dia',
+  showTransfers: 'Transferências e cofrinhos', hiddenAccounts: 'Contas no calendário', basis: 'Previsto/realizado', carry: 'Acumular meses',
+  startDate: 'Início do saldo', mondayFirst: 'Início da semana', holState: 'Feriados estaduais', holCity: 'Feriados municipais',
+  holOptional: 'Pontos facultativos', customHolidays: 'Feriados próprios', disabledHolidays: 'Feriados ligados', panels: 'Painéis', alerts: 'Alertas', defaultAccount: 'Conta principal',
+};
+let lastSaved = null;
 function saveSettings() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => db.put('settings', { key: 'app', value: S.settings }), 150);
+  saveTimer = setTimeout(() => {
+    const now = JSON.parse(JSON.stringify(S.settings));
+    if (lastSaved) {
+      const changed = Object.keys(SETTING_NAMES).filter(k => JSON.stringify(now[k]) !== JSON.stringify(lastSaved[k]));
+      if (changed.length) db.log(`Configuração alterada: ${changed.map(k => SETTING_NAMES[k]).join(', ')}`, { keys: changed });
+    }
+    lastSaved = now;
+    db.put('settings', { key: 'app', value: S.settings });
+  }, 400);
 }
 
 // ---------- Gravação com desfazer ----------
@@ -574,29 +589,46 @@ async function runAction(act, it) {
  * Verificações antes de um pagamento: conta autorizada para a tag e saldo suficiente.
  * Nunca bloqueia: mostra o problema e deixa o usuário decidir.
  */
-async function guardSpend(it, amount) {
-  if (!(it.kind === 'expense' || it.kind === 'transfer') || !(amount > 0)) return true;
-  const acc = S.accounts.get(it.accountId);
-  if (!acc) return true;
-  const allowed = acc.allowedTags || [];
-  const tags = it.splits ? it.splits.map(p => p.tagId) : [it.tagId];
-  if (it.kind === 'expense' && allowed.length && tags.some(t => !allowed.includes(t))) {
-    const names = tags.filter(t => !allowed.includes(t)).map(t => (tag(t) || {}).name || 'sem tag').join(', ');
-    if (!(await confirmDlg('Uso não autorizado', `A conta ${esc(acc.name)} não está liberada para ${esc(names)}. Liberar só desta vez?`, 'Liberar'))) return false;
+async function guardSpend(it, amount) { return guardSpendMany([{ it, amount }]); }
+
+/**
+ * Mesmas verificações para um ou vários pagamentos (pagamento em grupo):
+ * contas autorizadas para as tags e saldo livre suficiente em cada conta. Nunca bloqueia.
+ * list: [{ it, amount }]
+ */
+async function guardSpendMany(list) {
+  const out = list.filter(x => (x.it.kind === 'expense' || x.it.kind === 'transfer') && x.amount > 0 && S.accounts.get(x.it.accountId));
+  if (!out.length) return true;
+  // 1) permissões por conta
+  const bad = [];
+  for (const { it } of out) {
+    if (it.kind !== 'expense') continue;
+    const acc = S.accounts.get(it.accountId), allowed = acc.allowedTags || [];
+    const tags = it.splits ? it.splits.map(p => p.tagId) : [it.tagId];
+    const nope = tags.filter(t => allowed.length && !allowed.includes(t));
+    if (nope.length) bad.push(`${esc(itemTitle(it))} em ${esc(acc.name)}`);
   }
+  if (bad.length) {
+    const txt = bad.length === 1 ? `${bad[0]} não está liberado para esta conta.` : `${bad.length} pagamentos usam contas não liberadas para essa finalidade:<br>${bad.slice(0, 5).join('<br>')}`;
+    if (!(await confirmDlg('Uso não autorizado', `${txt}<br>Liberar só desta vez?`, 'Liberar'))) return false;
+  }
+  // 2) saldo livre por conta (soma do grupo)
+  const need = new Map();
+  for (const { it, amount } of out) need.set(it.accountId, (need.get(it.accountId) || 0) + amount);
   const b = F.balances({ data: S.data, accounts: accountsList(true), piggies: [...S.piggies.values()], today: today(), planUpto: today() });
-  const x = b.accounts.get(acc.id);
-  const free = x.real - x.reserved;
-  if (free >= amount) return true;
-  const others = accountsList().filter(a => a.id !== acc.id).map(a => ({ a, v: b.accounts.get(a.id).real - b.accounts.get(a.id).reserved })).filter(o => o.v > 0);
+  const free = id => { const x = b.accounts.get(id); return x ? x.real - x.reserved : 0; };
+  const short = [...need].filter(([id, v]) => free(id) < v).map(([id, v]) => ({ id, missing: v - Math.max(0, free(id)) }));
+  if (!short.length) return true;
+  const others = accountsList().filter(a => !need.has(a.id) && free(a.id) > 0);
   const res = await dialog({
     title: 'Saldo insuficiente',
-    html: `<p>${esc(acc.name)} tem ${money(Math.max(0, free))} livres. Faltam <b>${money(amount - Math.max(0, free))}</b>.</p>
-      ${others.length ? `<p class="small">Com saldo: ${others.map(o => `${esc(o.a.name)} ${money(o.v)}`).join(' · ')}</p>` : ''}`,
+    html: short.map(x => `<p>${esc(accName(x.id))} tem ${money(Math.max(0, free(x.id)))} livres. Faltam <b>${money(x.missing)}</b>.</p>`).join('') +
+      (others.length ? `<p class="small">Com saldo: ${others.map(a => `${esc(a.name)} ${money(free(a.id))}`).join(' · ')}</p>` : ''),
     actions: [{ label: 'Cancelar', value: null }, ...(others.length ? [{ label: 'Transferir', value: 'tr' }] : []), { label: 'Continuar', cls: 'primary', value: 'go' }],
   });
   if (res === 'tr') {
-    openForm({ kind: 'transfer', date: it.date, from: others[0].a.id, to: acc.id, amount: amount - Math.max(0, free) });
+    await closeAll();
+    openForm({ kind: 'transfer', date: today(), from: others[0].id, to: short[0].id, amount: short[0].missing });
     return false;
   }
   return res === 'go';
@@ -1040,7 +1072,12 @@ async function groupAction(act) {
     exitSelect();
   };
   switch (act) {
-    case 'pay': { const sel = items.filter(i => i.status !== 'paid' && i.status !== 'cancelled'); await run('# lançamentos pagos', ops.planStatus(sel, 'paid', S.data), 'Pagar'); return afterPaid(sel); }
+    case 'pay': {
+      const sel = items.filter(i => i.status !== 'paid' && i.status !== 'cancelled');
+      if (!(await guardSpendMany(sel.map(it => ({ it, amount: it.amount - (it.paidAmount || 0) }))))) return;
+      await run('# lançamentos pagos', ops.planStatus(sel, 'paid', S.data), 'Pagar');
+      return afterPaid(sel);
+    }
     case 'cancel': return run('# lançamentos cancelados', ops.planStatus(items.filter(i => i.status !== 'cancelled' && i.status !== 'paid'), 'cancelled', S.data), 'Cancelar');
     case 'restore': return run('# lançamentos restaurados', ops.planStatus(items.filter(i => i.status !== 'planned'), null, S.data), 'Restaurar');
     case 'move': await closeAll(); return moveFlow(items);
@@ -1061,7 +1098,7 @@ async function groupAction(act) {
 }
 
 // ---------- Tags ----------
-const PALETTE = ['#ff453a', '#ff9f0a', '#ffd60a', '#32d74b', '#63e6e2', '#40c8e0', '#0a84ff', '#5e5ce6', '#bf5af2', '#ff375f', '#ac8e68', '#8e8e93'];
+const PALETTE = ['#ff5f57', '#ff9f0a', '#ffd60a', '#45cf7f', '#63e6e2', '#40c8e0', '#8cb6e4', '#5e5ce6', '#bf5af2', '#ff375f', '#ac8e68', '#8e8e93'];
 
 async function tagDialog(t = null, kindHint = 'expense') {
   let color = t ? t.color : PALETTE[(S.tags.size * 5) % PALETTE.length];
@@ -1087,6 +1124,7 @@ async function tagDialog(t = null, kindHint = 'expense') {
   if (res === 'delete') {
     if (!(await confirmDlg('Excluir tag?', 'Os lançamentos continuam, apenas sem esta tag.', 'Excluir', 'danger'))) return null;
     await db.del('tags', t.id);
+    db.log(`Tag excluída: ${t.name}`, { before: t });
     S.tags.delete(t.id);
     const ch = ops.newChanges();
     for (const e of S.entries.values()) if (e.tagId === t.id) ch.entries.set(e.id, { ...e, tagId: null });
@@ -1097,6 +1135,7 @@ async function tagDialog(t = null, kindHint = 'expense') {
   }
   const nt = t ? { ...t, ...res } : { id: uid(), ...res, order: S.tags.size };
   await db.put('tags', nt);
+  db.log(t ? `Tag alterada: ${nt.name}` : `Tag criada: ${nt.name}`, { before: t || null, after: nt });
   S.tags.set(nt.id, nt);
   refresh();
   return nt;
@@ -1129,7 +1168,15 @@ function syncDrawer() {
   $('#panelCfg').innerHTML = Object.entries(P).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-panel="${k}" ${s.panels[k] ? 'checked' : ''}></label>`).join('');
   $('#alertCfg').innerHTML = Object.entries(F.ALERT_TYPES).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-alert="${k}" ${s.alerts[k] === false ? '' : 'checked'}></label>`).join('');
   $('#btnInstall').hidden = !installPrompt;
-  $('#customHolList').innerHTML = s.customHolidays.map((h, i) => `<div class="row"><span>${esc(h.name)} <span class="muted">${dmy(h.date)}</span></span><button class="link-btn" data-del-hol="${i}">Remover</button></div>`).join('');
+  // todos os feriados (nacionais, estaduais, municipais e próprios), cada um com liga/desliga
+  const off = new Set(s.disabledHolidays || []);
+  const all = holidayNames({ state: s.holState, city: s.holCity, optional: s.holOptional, custom: s.customHolidays });
+  $('#customHolList').innerHTML = all.map(h => {
+    const ci = h.custom ? s.customHolidays.findIndex(c => c.name === h.name) : -1;
+    return `<label class="row hol-row"><span><span class="hol-name">${esc(h.name)}</span><span class="hol-sub">${dm(h.date)} · ${h.scope}</span></span>
+      ${ci >= 0 ? `<button type="button" class="link-btn" data-del-hol="${ci}">Remover</button>` : ''}
+      <input type="checkbox" class="switch" data-hol="${esc(h.name)}" ${off.has(h.name) ? '' : 'checked'}></label>`;
+  }).join('');
   renderTagList();
 }
 async function storageInfo() {
@@ -1139,26 +1186,34 @@ async function storageInfo() {
 }
 
 async function loadSample() {
+  // impede duplicação: o exemplo só pode ser carregado uma vez (ou de novo depois de apagar os dados)
+  if (S.settings.sampleLoaded || [...S.accounts.values()].some(a => a.sample) || [...S.entries.values()].some(e => e.sample)) {
+    toast('O exemplo já foi carregado');
+    return;
+  }
+  if (S.entries.size && !(await confirmDlg('Carregar exemplo?', 'Os dados de exemplo serão somados aos seus lançamentos atuais.', 'Carregar'))) return;
+  S.settings.sampleLoaded = true;
+  saveSettings();
   const { y, m } = S.view;
   const start = iso(y, m, 1), now = nowISO();
   const mkTag = (name, kind, color) => ({ id: uid(), name, kind, color, order: S.tags.size });
   const T = {
-    sal: mkTag('Salário', 'income', '#32d74b'), ifood: mkTag('Entregas', 'income', '#63e6e2'), alm: mkTag('Almoço', 'expense', '#ff9f0a'),
+    sal: mkTag('Salário', 'income', '#45cf7f'), ifood: mkTag('Entregas', 'income', '#63e6e2'), alm: mkTag('Almoço', 'expense', '#ff9f0a'),
     jan: mkTag('Jantar', 'expense', '#ffd60a'), tr: mkTag('Transporte', 'expense', '#40c8e0'), net: mkTag('Internet', 'expense', '#5e5ce6'),
     lz: mkTag('Lazer', 'expense', '#bf5af2'), bike: mkTag('Energia da bicicleta', 'expense', '#ff375f'),
   };
   Object.values(T).forEach((t, i) => { t.order = S.tags.size + i; });
   const main = S.settings.defaultAccount;
-  const ifood = { id: uid(), name: 'Conta iFood', type: 'digital', institution: '', initialBalance: 0, color: '#ff375f', purpose: 'Ganhos com entregas', includeInTotal: true, archived: false, allowedTags: [T.bike.id], rules: [], order: 1, createdAt: now };
+  const ifood = { id: uid(), sample: true, name: 'Conta iFood', type: 'digital', institution: '', initialBalance: 0, color: '#ff375f', purpose: 'Ganhos com entregas', includeInTotal: true, archived: false, allowedTags: [T.bike.id], rules: [], order: 1, createdAt: now };
   const pEmerg = { id: uid(), name: 'Emergência', type: 'virtual', accountId: ifood.id, goal: 100000, deadline: '', color: '#ff9f0a', createdAt: now };
   const pIfood = { id: uid(), name: 'Cofrinho iFood', type: 'virtual', accountId: ifood.id, goal: 300000, deadline: '', color: '#63e6e2', createdAt: now };
   ifood.rules = [{ id: uid(), origin: '', auto: false, steps: [{ type: 'fixed', value: 2000, target: 'account:' + main }, { type: 'percent', value: 10, target: 'piggy:' + pEmerg.id }, { type: 'remainder', target: 'piggy:' + pIfood.id }] }];
   const metas = [
     { id: uid(), name: 'Alimentação', kind: 'expense', period: 'month', amount: 40000, tagIds: [T.alm.id, T.jan.id], color: '#ff9f0a', tintTags: true, alertPct: 80, createdAt: now },
-    { id: uid(), name: 'Gastos do dia útil', kind: 'expense', period: 'businessDay', amount: 4000, tagIds: [T.alm.id, T.tr.id, T.jan.id], color: '#64d2ff', rollover: 'week', showOnCalendar: true, colorGood: '#32d74b', colorBad: '#ff453a', alertPct: 100, createdAt: now },
+    { id: uid(), name: 'Gastos do dia útil', kind: 'expense', period: 'businessDay', amount: 4000, tagIds: [T.alm.id, T.tr.id, T.jan.id], color: '#64d2ff', rollover: 'week', showOnCalendar: true, colorGood: '#45cf7f', colorBad: '#ff5f57', alertPct: 100, createdAt: now },
     { id: uid(), name: 'Entregas no mês', kind: 'income', period: 'month', amount: 120000, tagIds: [], origins: ['iFood'], color: '#63e6e2', createdAt: now },
   ];
-  const E = (title, kind, amount, tagId, rule, extra = {}) => ({ id: uid(), kind, title, amount, tagId, accountId: main, rule: { start, ...rule }, segments: [], createdAt: now, updatedAt: now, ...extra });
+  const E = (title, kind, amount, tagId, rule, extra = {}) => ({ id: uid(), sample: true, kind, title, amount, tagId, accountId: main, rule: { start, ...rule }, segments: [], createdAt: now, updatedAt: now, ...extra });
   const ch = ops.newChanges();
   [E('Salário', 'income', 165000, T.sal.id, { type: 'nthBusinessDay', n: 5 }, { origin: 'Salário CLT' }),
     E('Entregas', 'income', 30000, T.ifood.id, { type: 'weekly', weekdays: [5], every: 1 }, { origin: 'iFood', accountId: ifood.id }),
@@ -1317,7 +1372,7 @@ function bind() {
     S.settings[k] = el.checked;
     if (k === 'carry') { $$('.carry-only').forEach(x => { x.hidden = !el.checked; }); if (el.checked && !S.settings.startDate) { S.settings.startDate = iso(S.view.y, S.view.m, 1); $('#startDate').value = S.settings.startDate; } }
     saveSettings();
-    if (k === 'carry' || k === 'holOptional') rebuild();
+    if (k === 'carry' || k === 'holOptional') { rebuild(); if (k === 'holOptional') syncDrawer(); }
     if (k === 'mondayFirst') renderHeader();
     renderGrid();
     if (k === 'showTransfers' && S.selected && dayVisible()) renderDay(S.selected);
@@ -1329,19 +1384,28 @@ function bind() {
     renderGrid();
   };
   $('#startDate').addEventListener('change', e => { S.settings.startDate = e.target.value || null; saveSettings(); rebuild(); renderGrid(); });
-  $('#holState').addEventListener('change', e => { S.settings.holState = e.target.value; saveSettings(); rebuild(); renderGrid(); });
-  $('#holCity').addEventListener('change', e => { S.settings.holCity = e.target.value; saveSettings(); rebuild(); renderGrid(); });
+  $('#holState').addEventListener('change', e => { S.settings.holState = e.target.value; saveSettings(); rebuild(); refresh(); syncDrawer(); });
+  $('#holCity').addEventListener('change', e => { S.settings.holCity = e.target.value; saveSettings(); rebuild(); refresh(); syncDrawer(); });
   $('#btnAddHoliday').onclick = async () => {
     const res = await dialog({
       title: 'Novo feriado',
-      html: `<input type="date" id="chDate" value="${S.selected || today()}"><input type="text" id="chName" placeholder="Nome" maxlength="40">`,
-      actions: [{ label: 'Cancelar', value: null }, { label: 'Adicionar', cls: 'primary', validate: () => !!$('#chDate').value, value: () => ({ date: $('#chDate').value, name: $('#chName').value.trim() || 'Feriado' }) }],
+      html: `<input type="text" id="chName" placeholder="Nome (ex.: Aniversário da cidade)" maxlength="40"><input type="date" id="chDate" value="${S.selected || today()}">
+        <select id="chScope"><option value="municipal">Municipal</option><option value="estadual">Estadual</option><option value="nacional">Nacional</option><option value="personalizado">Pessoal (ex.: folga)</option></select>
+        <label class="inline"><span>Repetir todo ano</span><input type="checkbox" class="switch" id="chYearly" checked></label>`,
+      actions: [{ label: 'Cancelar', value: null }, { label: 'Adicionar', cls: 'primary', validate: () => !!$('#chDate').value, value: () => ({ date: $('#chDate').value, name: $('#chName').value.trim() || 'Feriado', scope: $('#chScope').value, yearly: $('#chYearly').checked }) }],
     });
     if (!res) return;
-    S.settings.customHolidays = [...S.settings.customHolidays.filter(h => h.date !== res.date), res].sort((a, b) => a.date.localeCompare(b.date));
-    saveSettings(); syncDrawer(); rebuild(); renderGrid();
+    S.settings.customHolidays = [...S.settings.customHolidays.filter(h => h.name !== res.name), res].sort((a, b) => a.date.localeCompare(b.date));
+    saveSettings(); syncDrawer(); rebuild(); refresh();
   };
-  $('#customHolList').onclick = e => { const b = e.target.closest('[data-del-hol]'); if (!b) return; S.settings.customHolidays.splice(+b.dataset.delHol, 1); saveSettings(); syncDrawer(); rebuild(); renderGrid(); };
+  $('#customHolList').onclick = e => { const b = e.target.closest('[data-del-hol]'); if (!b) return; e.preventDefault(); S.settings.customHolidays.splice(+b.dataset.delHol, 1); saveSettings(); syncDrawer(); rebuild(); refresh(); };
+  $('#customHolList').addEventListener('change', e => {
+    const n = e.target.dataset.hol; if (!n) return;
+    const set = new Set(S.settings.disabledHolidays || []);
+    e.target.checked ? set.delete(n) : set.add(n);
+    S.settings.disabledHolidays = [...set];
+    saveSettings(); rebuild(); refresh();
+  });
   $('#btnNewTag').onclick = () => tagDialog();
   $('#tagList').addEventListener('click', e => { const b = e.target.closest('[data-edit-tag]'); if (b) tagDialog(tag(b.dataset.editTag)); });
   $('#tagList').addEventListener('change', e => {
@@ -1434,7 +1498,7 @@ async function ensureDefaultAccount() {
   const first = accountsList(true)[0];
   if (first) { id = first.id; }
   else {
-    const a = { id: uid(), name: 'Principal', type: 'checking', institution: '', initialBalance: S.settings.initialBalance || 0, color: '#0a84ff', purpose: 'Despesas do dia a dia', includeInTotal: true, archived: false, allowedTags: [], rules: [], order: 0, createdAt: nowISO() };
+    const a = { id: uid(), name: 'Principal', type: 'checking', institution: '', initialBalance: S.settings.initialBalance || 0, color: '#8cb6e4', purpose: 'Despesas do dia a dia', includeInTotal: true, archived: false, allowedTags: [], rules: [], order: 0, createdAt: nowISO() };
     await db.put('accounts', a);
     S.accounts.set(a.id, a);
     id = a.id;
@@ -1474,6 +1538,7 @@ async function init() {
     checks.forEach(c => S.checks.set(c.date, c));
     const app = settings.find(s => s.key === 'app');
     if (app) S.settings = { ...DEFAULTS, ...app.value };
+    lastSaved = JSON.parse(JSON.stringify(S.settings));
     await ensureDefaultAccount();
   } catch (err) {
     console.error(err);

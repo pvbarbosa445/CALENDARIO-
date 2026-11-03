@@ -110,7 +110,7 @@ export function planEdit({ entry, item, patch, pay, scope, today, data, mondayFi
   ch.entries.set(e.id, e);
   // ajustes individuais futuros (não pagos) passam a seguir o novo valor
   for (const ov of data.overrides.values()) {
-    if (ov.entryId !== entry.id || ov.orig < D || ov.status === 'paid') continue;
+    if (ov.entryId !== entry.id || ov.orig < D || hasMoney(ov)) continue;
     const clear = {};
     fields.forEach(f => { if (f in ov) clear[f] = undefined; });
     if (Object.keys(clear).length) setOv(ch, data, { key: ov.key, entryId: ov.entryId, orig: ov.orig }, clear, now);
@@ -150,22 +150,30 @@ function materialize(ch, entry, ov, data, uid, now) {
   const a = attrsAt(entry, ov.orig);
   const date = it ? it.date : (ov.movedTo || ov.orig);
   const id = uid();
+  // preserva tudo o que identifica o movimento: contas de origem/destino, cofrinho, origem, divisão
   ch.entries.set(id, {
     id, seriesId: entry.seriesId || entry.id, kind: entry.kind, accountId: entry.accountId ?? null,
+    toAccountId: entry.toAccountId ?? null, piggyId: entry.piggyId ?? null, origin: entry.origin || '',
+    ...(entry.splits ? { splits: entry.splits.map(p => ({ ...p })) } : {}),
     title: ov.title ?? a.title, amount: a.amount, tagId: 'tagId' in ov ? ov.tagId : a.tagId,
-    rule: { type: 'once', start: date }, createdAt: entry.createdAt, updatedAt: now,
+    rule: { type: 'once', start: date }, materializedFrom: ov.key, createdAt: entry.createdAt, updatedAt: now,
   });
   const k = occKey(id, date);
-  ch.overrides.set(k, { key: k, entryId: id, orig: date, status: 'paid', paidAt: ov.paidAt || now,
-    ...(ov.amount != null ? { amount: ov.amount } : {}), updatedAt: now });
+  ch.overrides.set(k, {
+    key: k, entryId: id, orig: date, status: ov.status, paidAt: ov.paidAt || now,
+    ...(ov.status === 'partial' ? { paidAmount: ov.paidAmount || 0 } : {}),
+    ...(ov.amount != null ? { amount: ov.amount } : {}), updatedAt: now,
+  });
 }
+/** Ocorrências com dinheiro já movimentado (pago ou parcial) precisam sobreviver a mudanças de regra. */
+const hasMoney = ov => ov.status === 'paid' || (ov.status === 'partial' && ov.paidAmount > 0);
 
 /** Encerra a recorrência antes de D (D e seguintes deixam de existir). Pagos são preservados. */
 export function planEndSeries({ entry, from, data, uid, now = new Date().toISOString() }) {
   const ch = newChanges();
   for (const ov of data.overrides.values()) {
     if (ov.entryId !== entry.id || ov.orig < from) continue;
-    if (ov.status === 'paid') materialize(ch, entry, ov, data, uid, now);
+    if (hasMoney(ov)) materialize(ch, entry, ov, data, uid, now);
     ch.overrides.set(ov.key, null);
   }
   if (from <= entry.rule.start) ch.entries.set(entry.id, null);
@@ -200,7 +208,7 @@ export function planCheckDays(dates, itemsByDate, data, now = new Date().toISOSt
   for (const d of dates) {
     const items = itemsByDate(d);
     for (const it of items) if (it.status === 'planned') setOv(ch, data, it, { status: 'pending' }, now);
-    const spent = items.some(it => it.kind === 'expense' && it.status === 'paid');
+    const spent = items.some(it => it.kind === 'expense' && (it.status === 'paid' || it.status === 'partial'));
     ch.checks.set(d, { date: d, checkedAt: now, noExpenses: !spent });
   }
   return ch;

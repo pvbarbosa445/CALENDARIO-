@@ -148,7 +148,18 @@ function row({ a, id, dot, t, s, v, vs, cls = '' }) {
   return `<button class="card-row" ${a ? `data-a="${a}"` : ''} ${id ? `data-id="${esc(id)}"` : ''}>${dot ? `<span class="dot" style="background:${dot}"></span>` : ''}
     <span class="grow"><div class="t">${t}</div>${s ? `<div class="s">${s}</div>` : ''}</span>${v != null ? `<span class="v ${cls}">${v}${vs ? `<small>${vs}</small>` : ''}</span>` : ''}</button>`;
 }
-async function saveStore(store, map, obj) { await db.put(store, obj); S()[map].set(obj.id, obj); C.refresh(); }
+const STORE_LABEL = { accounts: 'Conta', piggies: 'Cofrinho', metas: 'Meta' };
+async function saveStore(store, map, obj, what) {
+  const before = S()[map].get(obj.id) || null;
+  await db.put(store, obj); S()[map].set(obj.id, obj);
+  db.log(what || `${STORE_LABEL[store]} ${before ? 'alterada' : 'criada'}: ${obj.name}`.replace('Cofrinho alterada', 'Cofrinho alterado').replace('Cofrinho criada', 'Cofrinho criado'), { before, after: obj });
+  C.refresh();
+}
+async function deleteStore(store, map, obj) {
+  await db.del(store, obj.id); S()[map].delete(obj.id);
+  db.log(`${STORE_LABEL[store]} excluíd${store === 'piggies' ? 'o' : 'a'}: ${obj.name}`, { before: obj });
+  C.refresh();
+}
 function onceEntry({ kind, amount, date, accountId, toAccountId = null, piggyId = null, title = '', paid = true }) {
   const id = C.uid(), now = C.nowISO();
   const ch = C.ops.newChanges();
@@ -267,7 +278,7 @@ function accountForm(a = null) {
       if (used) { C.toast('A conta tem movimentações. Arquive em vez de excluir.'); return false; }
       if (a.id === S().settings.defaultAccount) { C.toast('A conta principal não pode ser excluída'); return false; }
       if (!(await C.confirmDlg('Excluir conta?', '', 'Excluir', 'danger'))) return false;
-      await db.del('accounts', a.id); S().accounts.delete(a.id); C.refresh(); C.syncDrawer();
+      await deleteStore('accounts', 'accounts', a); C.syncDrawer();
       return true;
     }),
   });
@@ -290,7 +301,7 @@ function ruleForm(accId, idx) {
         if (view.vals.steps.some(s => !s.target)) { C.toast('Escolha o destino de cada passo'); return; }
         const rules = [...(acc.rules || [])];
         if (idx >= 0) rules[idx] = view.vals; else rules.push(view.vals);
-        await saveStore('accounts', 'accounts', { ...acc, rules });
+        await saveStore('accounts', 'accounts', { ...acc, rules }, `Regra de distribuição salva: ${acc.name}`);
         C.toast('Regra salva'); back();
       },
     },
@@ -341,7 +352,7 @@ function ruleForm(accId, idx) {
       del: async () => {
         if (!(await C.confirmDlg('Excluir regra?', '', 'Excluir', 'danger'))) return;
         const rules = [...acc.rules]; rules.splice(idx, 1);
-        await saveStore('accounts', 'accounts', { ...acc, rules }); back();
+        await saveStore('accounts', 'accounts', { ...acc, rules }, `Regra de distribuição excluída: ${acc.name}`); back();
       },
     },
   };
@@ -461,9 +472,19 @@ function piggyForm(p = null) {
     },
     onDelete: p && (async () => {
       const saved = (bal().piggies.get(p.id) || {}).saved || 0;
+      if (p.type === 'real') {
+        // cofrinho real = conta separada: a conta e o dinheiro continuam existindo, só deixa de ser cofrinho
+        const acc = S().accounts.get(p.accountId);
+        if (!(await C.confirmDlg('Excluir cofrinho?', `A conta “${C.esc(acc ? acc.name : p.name)}” continua existindo${saved ? ` com ${C.money(saved)}` : ''}, junto com todas as transferências. Só deixa de aparecer como cofrinho.`, 'Excluir', 'danger'))) return false;
+        if (acc) await saveStore('accounts', 'accounts', { ...acc, type: acc.type === 'piggy' ? 'savings' : acc.type, purpose: acc.purpose || `Antigo cofrinho ${p.name}` }, `Conta mantida após excluir cofrinho: ${acc.name}`);
+        // reservas/transferências antigas que apontavam para o cofrinho continuam válidas (só perdem o vínculo visual)
+        await deleteStore('piggies', 'piggies', p);
+        C.syncDrawer();
+        return true;
+      }
       if (saved > 0) { C.toast('Retire o valor guardado antes de excluir (ou arquive).'); return false; }
       if (!(await C.confirmDlg('Excluir cofrinho?', 'O histórico de movimentações continua no calendário.', 'Excluir', 'danger'))) return false;
-      await db.del('piggies', p.id); S().piggies.delete(p.id); C.refresh();
+      await deleteStore('piggies', 'piggies', p);
       return true;
     }),
   });
@@ -485,7 +506,13 @@ function metasView() {
 function metaCard(m, p) {
   const { money, esc } = C;
   const inc = m.kind === 'income';
-  const label = inc ? `${money(p.real)} de ${money(p.limit)}` : `${money(p.real)} de ${money(p.limit)}`;
+  if (!p.limit) {
+    return `<button class="card-row col" data-a="open" data-id="${m.id}">
+      <span class="line"><span class="dot" style="background:${m.color}"></span><span class="grow t">${esc(m.name)}</span><span class="v">${money(p.real)}</span></span>
+      <span class="s">${inc ? 'recebido' : 'pago'} · previsto ${money(p.planned)} · sem limite definido</span>
+    </button>`;
+  }
+  const label = `${money(p.real)} de ${money(p.limit)}`;
   const sub = inc ? (p.real >= p.limit ? 'Meta atingida' : `Faltam ${money(p.limit - p.real)}`)
     : p.over ? `Excedeu ${money(p.over)}` : `Restam ${money(p.remaining)}`;
   return `<button class="card-row col" data-a="open" data-id="${m.id}">
@@ -519,12 +546,12 @@ function metaDetail(id) {
       return `<div class="period-nav"><button class="icon-btn" data-a="prev">${C.icon('left')}</button><span>${dm(p.from)} a ${dm(p.to)}</span><button class="icon-btn" data-a="next">${C.icon('right')}</button></div>
         <div class="stats">
           ${stat(inc ? 'Recebido' : 'Usado', money(p.real), '', true)}
-          ${stat(inc ? 'Meta' : 'Limite', money(p.limit))}
-          ${inc ? stat('Falta', money(Math.max(0, p.limit - p.real))) : p.over ? stat('Excedente', money(p.over), 'neg') : stat('Restante', money(p.remaining), 'pos')}
+          ${p.limit ? stat(inc ? 'Meta' : 'Limite', money(p.limit)) : stat(inc ? 'Meta' : 'Limite', 'Não definido')}
+          ${!p.limit ? '' : inc ? stat('Falta', money(Math.max(0, p.limit - p.real))) : p.over ? stat('Excedente', money(p.over), 'neg') : stat('Restante', money(p.remaining), 'pos')}
           ${stat('Previsto no período', money(p.planned))}
           ${daily ? stat('Economia acumulada', money(Math.max(0, p.saved)), p.saved > 0 ? 'pos' : '') + stat('Dias acima do limite', String(p.overDays)) : ''}
         </div>
-        ${progress(p.pct, m.color, !inc && p.over > 0)}
+        ${p.limit ? progress(p.pct, m.color, !inc && p.over > 0) : '<p class="hint">Toque em Editar para definir o limite desta meta.</p>'}
         <p class="hint">${C.F.PERIODS[m.period]}${daily ? ` · ${ROLLOVER[m.rollover || 'none'].toLowerCase()}${m.carryExcess ? ', excedente desconta dos próximos dias' : ''}` : ''}${tags.length ? ` · tags: ${tags.map(t => esc(t.name)).join(', ')}` : inc ? '' : ' · todas as despesas'}${inc && m.origins && m.origins.length ? ` · origem: ${m.origins.map(esc).join(', ')}` : ''}</p>
         ${daily && m.rollover === 'reserve' && p.saved > 0 ? `<div class="btn-row"><button class="primary-btn ghost" data-a="reserve">Guardar ${money(p.saved)} num cofrinho</button></div>` : ''}
         ${days}
@@ -558,7 +585,7 @@ function metaDetail(id) {
 
 function metaForm(m = null) {
   const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', ') }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], accountIds: [], originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#32d74b', colorBad: '#ff453a', tintTags: true, alertPct: 80 };
+    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], accountIds: [], originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
@@ -568,7 +595,8 @@ function metaForm(m = null) {
       { k: 'period', label: 'Período', type: 'select', options: Object.entries(C.F.PERIODS) },
       { k: 'from', label: 'De', type: 'date', show: v => v.period === 'custom' },
       { k: 'to', label: 'Até', type: 'date', show: v => v.period === 'custom' },
-      { k: 'amount', label: 'Valor', type: 'money', required: true },
+      { k: 'amount', label: 'Limite / valor', type: 'money' },
+      { hint: 'Pode deixar em branco e definir depois: a meta já acompanha o que foi gasto.', show: v => !v.amount },
       { k: 'color', label: 'Cor', type: 'color' },
       { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch' },
       { section: 'O que entra na meta' },
@@ -588,17 +616,16 @@ function metaForm(m = null) {
       { k: 'archived', label: 'Arquivar', type: 'switch', show: () => !!m },
     ],
     onSave: async v => {
-      if (!(v.amount > 0)) { C.toast('Informe o valor da meta'); return false; }
       const { originsTxt, ...rest } = v;
       const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
-      if (!daily(obj) || obj.kind === 'income') obj.showOnCalendar = false;
+      if (!daily(obj) || obj.kind === 'income' || !obj.amount) obj.showOnCalendar = false;
       if (obj.showOnCalendar) for (const o of S().metas.values()) if (o.id !== obj.id && o.showOnCalendar) await saveStore('metas', 'metas', { ...o, showOnCalendar: false });
       await saveStore('metas', 'metas', obj);
       C.toast(m ? 'Meta atualizada' : 'Meta criada');
     },
     onDelete: m && (async () => {
       if (!(await C.confirmDlg('Excluir meta?', 'Os lançamentos não são afetados.', 'Excluir', 'danger'))) return false;
-      await db.del('metas', m.id); S().metas.delete(m.id); C.refresh();
+      await deleteStore('metas', 'metas', m);
       return true;
     }),
   });
@@ -768,11 +795,22 @@ export function renderPanels(box) {
 }
 
 // ------------------------------------------------------------------ BACKUP
-export async function exportBackup() {
+async function snapshot() {
   const stores = {};
-  for (const s of db.STORES) stores[s] = await db.getAll(s);
-  const now = C.nowISO();
-  const data = { app: 'calendario-financeiro', format: 1, exportedAt: now, stores };
+  for (const st of db.STORES) stores[st] = await db.getAll(st);
+  return { app: 'calendario-financeiro', format: 1, exportedAt: C.nowISO(), stores };
+}
+function download(data, name) {
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return blob;
+}
+
+export async function exportBackup() {
+  const data = await snapshot();
   const name = `financas-backup-${C.today()}.json`;
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const file = typeof File === 'function' ? new File([blob], name, { type: 'application/json' }) : null;
@@ -783,36 +821,94 @@ export async function exportBackup() {
       shared = true;
     }
   } catch (err) { if (err && err.name === 'AbortError') return; }
-  if (!shared) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  }
-  S().settings.lastBackup = now;
+  if (!shared) download(data, name);
+  S().settings.lastBackup = data.exportedAt;
   C.saveSettings();
+  db.log('Backup exportado', {});
   C.refresh();
   C.toast('Backup exportado');
 }
 
+/**
+ * Valida um backup antes de restaurar: estrutura, campos obrigatórios, datas, valores,
+ * duplicidades (mesma chave) e referências quebradas. Devolve os dados limpos e um relatório.
+ */
+export function validateBackup(data) {
+  const errors = [], notes = [];
+  if (!data || typeof data !== 'object' || data.app !== 'calendario-financeiro' || !data.stores || typeof data.stores !== 'object') {
+    return { ok: false, errors: ['Este arquivo não é um backup do Calendário Financeiro.'] };
+  }
+  const KEY = { entries: 'id', overrides: 'key', tags: 'id', settings: 'key', history: 'id', checks: 'date', accounts: 'id', piggies: 'id', metas: 'id' };
+  const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const KINDS = new Set(['income', 'expense', 'transfer', 'reserve', 'release']);
+  const clean = {};
+  for (const st of db.STORES) {
+    const list = data.stores[st];
+    if (list === undefined) { clean[st] = []; continue; }
+    if (!Array.isArray(list)) { errors.push(`“${st}” está em formato inválido.`); continue; }
+    const seen = new Set(); let dup = 0, bad = 0;
+    clean[st] = [];
+    for (const rec of list) {
+      const k = rec && rec[KEY[st]];
+      if (st !== 'history' && (k === undefined || k === null || k === '')) { bad++; continue; }
+      if (st === 'entries' && (!KINDS.has(rec.kind) || !rec.rule || !isDate(rec.rule.start) || !Number.isFinite(rec.amount) || rec.amount < 0)) { bad++; continue; }
+      if (st === 'checks' && !isDate(rec.date)) { bad++; continue; }
+      if (st !== 'history' && seen.has(k)) { dup++; continue; }
+      if (st !== 'history') seen.add(k);
+      clean[st].push(rec);
+    }
+    if (dup) notes.push(`${dup} registro(s) duplicado(s) em ${st} foram ignorados.`);
+    if (bad) notes.push(`${bad} registro(s) inválido(s) em ${st} foram ignorados.`);
+  }
+  if (errors.length) return { ok: false, errors };
+  // referências: ajustes de ocorrência precisam de um lançamento existente
+  const ids = new Set(clean.entries.map(e => e.id));
+  const orphan = clean.overrides.filter(o => !ids.has(o.entryId)).length;
+  if (orphan) { clean.overrides = clean.overrides.filter(o => ids.has(o.entryId)); notes.push(`${orphan} ajuste(s) sem lançamento foram ignorados.`); }
+  const accIds = new Set(clean.accounts.map(a => a.id));
+  const noAcc = clean.entries.filter(e => (e.accountId && !accIds.has(e.accountId)) || (e.toAccountId && !accIds.has(e.toAccountId))).length;
+  if (noAcc && clean.accounts.length) notes.push(`${noAcc} lançamento(s) apontam para contas que não estão no arquivo; irão para a conta principal.`);
+  if (!clean.entries.length && !clean.accounts.length && !clean.metas.length) return { ok: false, errors: ['O arquivo não contém dados.'] };
+  return { ok: true, stores: clean, notes, demo: !!data.demo, exportedAt: data.exportedAt };
+}
+
 export async function importBackup(file) {
   let data;
-  try { data = JSON.parse(await file.text()); } catch { C.toast('Arquivo inválido'); return; }
-  if (!data || data.app !== 'calendario-financeiro' || !data.stores) { C.toast('Este arquivo não é um backup deste app'); return; }
-  const n = k => (data.stores[k] || []).length;
-  const ok = await C.confirmDlg('Restaurar backup?',
-    `Backup de ${C.dmy(String(data.exportedAt).slice(0, 10))}: ${n('entries')} lançamentos, ${n('accounts')} contas, ${n('metas')} metas, ${n('piggies')} cofrinhos.<br><b>Os dados atuais deste aparelho serão substituídos.</b>`, 'Restaurar', 'danger');
+  try { data = JSON.parse(await file.text()); } catch { C.toast('Arquivo inválido ou corrompido'); return; }
+  const v = validateBackup(data);
+  if (!v.ok) { await C.dialog({ title: 'Backup não pode ser usado', html: `<p>${v.errors.map(C.esc).join('<br>')}</p><p class="small">Nada foi alterado.</p>`, actions: [{ label: 'Ok', value: null, cls: 'primary' }] }); return; }
+  const n = k => v.stores[k].length;
+  const hasMine = S().entries.size > 0 || [...S().accounts.values()].some(a => a.initialBalance) || S().metas.size > 0;
+  const ok = await C.confirmDlg(v.demo ? 'Importar dados de demonstração?' : 'Restaurar backup?',
+    `${v.demo ? '<b>Arquivo de DEMONSTRAÇÃO.</b><br>' : `Backup de ${C.dmy(String(v.exportedAt || '').slice(0, 10) || C.today())}.<br>`}
+     ${n('entries')} lançamentos · ${n('accounts')} contas · ${n('metas')} metas · ${n('piggies')} cofrinhos · ${n('tags')} tags
+     ${v.notes.length ? `<br><span class="small">${v.notes.map(C.esc).join('<br>')}</span>` : ''}
+     <br><br>Os dados atuais deste aparelho serão <b>substituídos</b>.${hasMine ? ' Antes disso, uma cópia de segurança deles será baixada automaticamente.' : ''}`,
+    'Substituir', 'danger');
   if (!ok) return;
+  if (hasMine) {
+    // cópia de segurança automática: os dados pessoais nunca são perdidos sem uma cópia
+    download(await snapshot(), `financas-antes-de-restaurar-${C.today()}.json`);
+  }
   const conn = await db.openDB();
-  await new Promise((resolve, reject) => {
-    const t = conn.transaction(db.STORES, 'readwrite');
-    for (const s of db.STORES) {
-      const os = t.objectStore(s);
-      os.clear();
-      for (const rec of data.stores[s] || []) os.put(rec);
-    }
-    t.oncomplete = resolve; t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
-  }).catch(err => { C.toast('Falha ao restaurar: nada foi alterado'); throw err; });
-  C.toast('Backup restaurado');
-  setTimeout(() => location.reload(), 600);
+  try {
+    await new Promise((resolve, reject) => {
+      const t = conn.transaction(db.STORES, 'readwrite');
+      for (const st of db.STORES) {
+        const os = t.objectStore(st);
+        os.clear();
+        for (const rec of v.stores[st]) os.put(rec);
+      }
+      os_log(t);
+      t.oncomplete = resolve; t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
+    });
+  } catch (err) {
+    C.toast('Falha ao restaurar: nada foi alterado');
+    return;
+  }
+  C.toast(v.demo ? 'Demonstração importada' : 'Backup restaurado');
+  setTimeout(() => location.reload(), 900);
+}
+function os_log(t) {
+  t.objectStore('history').put({ at: new Date().toISOString(), action: 'Backup restaurado', payload: {} });
 }

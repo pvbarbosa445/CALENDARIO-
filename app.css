@@ -1,17 +1,20 @@
 /* Calendário Financeiro — visual minimalista escuro */
 :root {
+  /* Identidade: preto profundo, grafite/carvão e azul-claro. Verde = só dinheiro positivo. */
   --bg: #000;
-  --s1: #111113;
-  --s2: #1c1c1e;
-  --s3: #2c2c2e;
-  --line: rgba(255, 255, 255, .07);
-  --text: #f5f5f7;
-  --text-2: #98989f;
-  --text-3: #5a5a5f;
-  --green: #32d74b;
-  --red: #ff453a;
-  --accent: #0a84ff;
-  --orange: #ff9f0a;
+  --s1: #121315;          /* carvão */
+  --s2: #1c1d21;          /* grafite */
+  --s3: #2b2d32;          /* grafite claro */
+  --line: rgba(255, 255, 255, .09);
+  --text: #f3f4f6;
+  --text-2: #c4c7ce;      /* secundário: legível sobre preto */
+  --text-3: #9a9ea8;      /* terciário: ainda legível */
+  --green: #45cf7f;       /* receitas, saldos positivos, economia */
+  --red: #ff5f57;         /* despesas, negativos */
+  --accent: #8cb6e4;      /* azul-claro da marca */
+  --accent-ink: #0a1624;  /* texto sobre o azul */
+  --accent-soft: rgba(140, 182, 228, .16);
+  --orange: #f2b55c;      /* só avisos/pendências */
   --r: 14px;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --top: env(safe-area-inset-top, 0px);
@@ -430,3 +433,43 @@ b.warn { color: var(--orange); }
   .cell .val { font-size: 15px; }
 }
 @media (min-width: 900px) { .toast { top: auto; bottom: 28px; left: 28px; right: calc(var(--dock) + 110px); transform: translateY(12px); } .toast.on { transform: none; } }
+
+
+/* =================== Identidade v1.2 =================== */
+/* elementos preenchidos com o azul usam texto escuro (contraste) */
+.cell.today .num, .fab, .primary-btn, .act.primary span.ic, .pick.on .box, .dialog-actions button.primary, .step-top b { color: var(--accent-ink); }
+.primary-btn.ghost { color: var(--text); }
+.switch:checked { background: var(--accent); }
+.switch::after { background: #f3f4f6; }
+.chip.on, .dialog-body .chip.on { background: var(--accent-soft); color: var(--accent); }
+.segmented button.on { color: var(--text); }
+.quick button.ok { background: var(--accent-soft); color: var(--accent); }
+.checked-note { color: var(--accent); }
+.st-paid { color: var(--accent); }
+.cell.hol .num { color: var(--accent); }
+.cell.out .num { color: #55575d; }
+.cell.picked { background: var(--accent-soft); }
+.cell.picked .num { color: var(--text); }
+.cell.sel { background: var(--s2); }
+.cell .val.still { opacity: .55; }
+.month-title #yearName { color: var(--text-2); font-weight: 500; }
+.weekdays div { color: var(--text-2); }
+.text-btn, .link-btn, .row.action, .toast button { color: var(--accent); }
+.icon-btn.soft { color: var(--text-2); }
+.drawer .dot { display: none; }                 /* sem bolinhas decorativas no menu */
+.drawer { width: min(80vw, 300px); background: var(--s1); }
+.nav .ic svg { color: var(--accent); }
+.hint { color: var(--text-3); }
+.fab { box-shadow: none; }
+.progress { background: var(--s3); }
+.budget-line { color: var(--text-2); }
+.sheet, .drawer { background: var(--s1); }
+.group, .segmented, .step { background: var(--s2); }
+.danger-btn { background: var(--s2); }
+.hol-row { align-items: center; }
+.hol-row .hol-name { display: block; }
+.hol-row .hol-sub { display: block; font-size: 12px; color: var(--text-3); text-transform: capitalize; }
+.dialog-body label.inline { display: flex; align-items: center; justify-content: space-between; }
+.cell .num { flex: none; }
+details.more[open] > summary::after { transform: rotate(45deg) translate(-2px, -2px); }
+@media (max-height: 520px) { .cell .num { width: 26px; height: 26px; font-size: 14px; } }

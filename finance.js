@@ -129,13 +129,19 @@ export function dailyBudget(meta, from, to, { data, checks, today, isHoliday, mo
     const avail = limit + (roll === 'week' || roll === 'month' ? carry : 0);
     const sp = spent.get(d) || { planned: 0, real: 0 };
     const chk = checks.get(d);
-    const evaluated = d <= today && (!!chk || sp.real > 0);
+    // Só um dia CONFERIDO pode ser avaliado como economia/no limite. Sem conferência ele continua
+    // pendente — exceto quando o que já foi pago ultrapassa o disponível (excedente confirmado).
     let status, saved = 0;
-    if (evaluated) {
-      const diff = avail - sp.real;
-      status = chk && chk.noExpenses && sp.real === 0 ? 'zero' : diff > 0 ? 'saved' : diff === 0 ? 'ok' : 'over';
+    const diff = avail - sp.real;
+    if (d <= today && chk) {
+      status = chk.noExpenses && sp.real === 0 ? 'zero' : diff > 0 ? 'saved' : diff === 0 ? 'ok' : 'over';
       saved = limit - sp.real;
       if (roll === 'week' || roll === 'month') carry = meta.carryExcess ? diff : Math.max(0, diff);
+    } else if (d <= today && diff < 0) {
+      status = 'over';
+      saved = limit - sp.real;
+      if ((roll === 'week' || roll === 'month') && meta.carryExcess) carry = diff;
+      else if (roll === 'week' || roll === 'month') carry = 0;
     } else status = d > today ? 'future' : d === today ? 'open' : 'pending';
     if (d >= from) out.set(d, { limit, avail, spent: sp.real, planned: sp.planned, status, saved });
   }
@@ -145,7 +151,7 @@ export function dailyBudget(meta, from, to, { data, checks, today, isHoliday, mo
 /** Progresso de uma meta no período que contém `date`. */
 export function metaProgress(meta, date, ctx) {
   const { from, to } = periodRange(meta, date, ctx.mondayFirst);
-  let limit = meta.amount, real = 0, planned = 0, saved = 0, overDays = 0;
+  let limit = meta.amount || 0, real = 0, planned = 0, saved = 0, overDays = 0;
   const items = [];
   for (const [d, list] of itemsInRange(from, to, ctx.data)) {
     for (const it of list) { const s = metaShare(it, meta); if (s) { real += s.real; planned += s.planned; items.push({ it, ...s }); } }
@@ -158,7 +164,7 @@ export function metaProgress(meta, date, ctx) {
   const base = meta.kind === 'income' ? real : real;
   return {
     from, to, limit, real, planned, items: items.sort((a, b) => a.it.date.localeCompare(b.it.date)),
-    pct: limit ? base / limit : 0, remaining: limit - real, over: Math.max(0, real - limit),
+    pct: limit ? base / limit : 0, remaining: limit ? limit - real : 0, over: limit ? Math.max(0, real - limit) : 0,
     saved, overDays,
   };
 }
