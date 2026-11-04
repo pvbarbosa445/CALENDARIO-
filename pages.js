@@ -5,6 +5,7 @@ import { itemsInRange, occKey, counts, realizedOf } from './engine.js';
 import { addDays, parse, iso, daysInMonth, addMonths, MONTHS } from './dates.js';
 import * as db from './db.js';
 import * as SIM from './sim.js';
+import * as B from './budget.js';
 
 let C;            // contexto compartilhado do app (estado, formatação, diálogos, gravação)
 let el;           // a folha das páginas
@@ -12,7 +13,7 @@ const stack = []; // pilha de telas dentro da folha
 
 const ACC_TYPES = {
   checking: 'Conta corrente', savings: 'Poupança', digital: 'Carteira digital', cash: 'Dinheiro em espécie',
-  payment: 'Conta de pagamento', investment: 'Investimento', piggy: 'Cofrinho (conta separada)',
+  payment: 'Conta de pagamento', investment: 'Investimento', piggy: 'Cofrinho (conta separada)', treasury: 'Tesouro (investimentos)',
 };
 const ROLLOVER = { none: 'Não acumular', week: 'Acumular na semana', month: 'Acumular no mês', reserve: 'Enviar para um cofrinho' };
 
@@ -540,156 +541,291 @@ function piggiesView() {
   };
 }
 
-// ---------- simulação do cofrinho: apoio comum à tela principal e à configuração ----------
-const simSources = () => C.accountsList().filter(a => a.type !== 'piggy');
-const simCfgOf = p => SIM.simConfig(p, simSources(), S().settings.defaultAccount);
-const simRun = (p, cfg) => SIM.simulate({ data: S().data, piggy: p, cfg, today: C.today(), mondayFirst: S().settings.mondayFirst, account: S().accounts.get(p.accountId) });
-const pctTxt = v => String(Math.round(v * 100) / 100).replace('.', ',');
-/** Grava só a configuração da simulação (sem lançamentos e sem mexer em saldos). */
-async function saveSim(id, sim) {
-  const p = S().piggies.get(id); if (!p) return;
-  const obj = { ...p, sim: { ...(p.sim || {}), ...sim } };
-  await db.put('piggies', obj); S().piggies.set(id, obj);
-  render();
-}
-
+// ------------------------------------------------------------------ COFRINHO (detalhe)
+// Cofrinho = dinheiro guardado para um objetivo. Não rende sozinho; para investir, transfere para o Tesouro.
 function piggyDetail(id) {
   const pig = () => S().piggies.get(id);
-  let years = 10, details = false;
-  const view = {
+  return {
     get title() { return (pig() || {}).name || 'Cofrinho'; },
     get sub() { const p = pig(); return p ? (p.type === 'real' ? 'Conta separada' : `Virtual · em ${C.esc(C.accName(p.accountId))}`) : ''; },
     right: { label: 'Editar', fn: () => push(piggyForm(pig())) },
     body: () => {
       const p = pig(); if (!p) return '';
-      const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0, { money, dmy, esc, dm } = C;
+      const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0, { money, dmy } = C;
+      let plan = '';
+      if (p.goal && p.deadline && saved < p.goal) {
+        const months = Math.max(1, (parse(p.deadline).y - parse(C.today()).y) * 12 + parse(p.deadline).m - parse(C.today()).m);
+        plan = stat('Para chegar no prazo', `${money(Math.ceil((p.goal - saved) / months))}/mês`);
+      }
       const t = C.today();
-      const cfg = simCfgOf(p), accs = simSources(), r = simRun(p, cfg);
-      const on = accs.filter(a => cfg.sources[a.id].on);
-      const h = r.results.find(x => x.years === years) || r.results[r.results.length - 1];
-      const srcTxt = on.length ? on.map(a => `${esc(a.name)} (${cfg.sources[a.id].mode === 'weekly' ? `${money(cfg.sources[a.id].weekly)}/semana` : 'sobra do mês'})`).join(' + ') : 'nenhuma conta';
-      // ---------- cartão principal (como o simulador do Tesouro) ----------
-      const card = `<div class="sim-card">
-          <div class="sim-have"><small>Já guardado</small><b>${money(saved)}</b></div>
-          <div class="segmented sim-years">${SIM.HORIZONS.map(n => `<button class="${n === years ? 'on' : ''}" data-a="years" data-id="${n}">${n} ${n === 1 ? 'ano' : 'anos'}</button>`).join('')}</div>
-          ${on.length ? `<div class="sim-main"><small>em ${years} ${years === 1 ? 'ano' : 'anos'} você poderá ter</small><b>${money(h.real)}*</b><span>em dinheiro de hoje · ${dmy(h.date)}</span></div>
-          <div class="sim-facts">
-            <div><small>Valor nominal futuro</small><b>${money(h.nominal)}</b></div>
-            <div><small>Rentabilidade</small><b>IPCA + ${pctTxt(cfg.rate)}% a.a.</b></div>
-            <div><small>Guardando por mês</small><b>${money(r.perMonth)}</b></div>
+      const moves = itemsFor(it => it.piggyId === id || (p.type === 'real' && (it.accountId === p.accountId || it.toAccountId === p.accountId)), addDays(t, -365), addDays(t, 60));
+      const tr = treasury();
+      return `<div class="stats">
+          ${stat('Guardado', money(saved), '', true)}
+          ${p.goal ? stat('Meta', money(p.goal)) + stat('Falta', money(Math.max(0, p.goal - saved))) : ''}
+          ${p.deadline ? stat('Prazo', dmy(p.deadline)) : ''}${plan}
+        </div>
+        ${p.goal ? progress(saved / p.goal, p.color) : ''}
+        <div class="btn-row"><button class="primary-btn" data-a="in">Guardar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
+        ${tr.accountId && saved > 0 ? `<button class="sim-toggle" data-a="invest">Investir no ${C.esc(treasuryName())}</button>` : ''}
+        <div class="section-label"><span>MOVIMENTAÇÕES</span></div>
+        ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}
+        <p class="hint">O cofrinho guarda dinheiro para um objetivo e não rende sozinho. Para acompanhar rendimento e projeções, invista no ${C.esc(treasuryName())}.</p>`;
+    },
+    actions: { in: () => piggyMove(id, 'in'), out: () => piggyMove(id, 'out'), goDay, invest: () => treasuryMove('in', { from: 'piggy:' + id }) },
+  };
+}
+
+// ------------------------------------------------------------------ TESOURO (aba própria)
+// Investimentos de longo prazo: patrimônio investido (só aportes reais), projeções e renda se parar de aportar.
+// O dinheiro investido fica numa conta própria (tipo "treasury"): aporte e retirada são transferências,
+// então o patrimônio consolidado não aumenta artificialmente e nada vira receita ou despesa.
+const TR_ITEMS = {
+  saved: 'Patrimônio investido', projected: 'Patrimônio projetado', income: 'Renda se parar de aportar',
+  breakdown: 'Aportado e rendimentos', contrib: 'Contribuição mensal média', sources: 'Fontes de contribuição',
+};
+const TR_DEFAULT_VIEW = { order: ['saved', 'projected', 'income', 'breakdown', 'contrib', 'sources'], hidden: ['contrib'], highlight: 'projected', horizons: [1, 3, 5, 10], valueMode: 'both', showDetails: true };
+const HORIZON_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25, 30];
+const treasury = () => S().settings.treasury || {};
+const treasuryName = () => { const a = S().accounts.get(treasury().accountId); return a ? a.name : 'Tesouro'; };
+function trView() {
+  const v = { ...TR_DEFAULT_VIEW, ...(treasury().view || {}) };
+  v.order = [...v.order.filter(k => TR_ITEMS[k]), ...Object.keys(TR_ITEMS).filter(k => !v.order.includes(k))];
+  v.horizons = (v.horizons || []).map(Number).filter(n => HORIZON_CHOICES.includes(n)).sort((a, b) => a - b);
+  if (!v.horizons.length) v.horizons = [...TR_DEFAULT_VIEW.horizons];
+  return v;
+}
+async function saveTreasury(patch) {
+  S().settings.treasury = { ...treasury(), ...patch };
+  C.saveSettings(); render(); C.refresh();
+}
+const simSources = () => C.accountsList().filter(a => a.type !== 'piggy' && a.type !== 'treasury');
+const simCfgOf = () => SIM.simConfig(treasury(), simSources(), S().settings.defaultAccount);
+const pctTxt = v => String(Math.round(v * 100) / 100).replace('.', ',');
+/** % da divisão da renda destinado ao Tesouro, mês a mês (base "divisão da renda" da simulação). */
+function treasuryPlanMonth(ids, y, m) {
+  const cfg = budgetCfg(), model = B.activeModelOf(cfg);
+  const pct = B.liveCats(model).filter(c => (c.piggyIds || []).includes(B.TREASURY)).reduce((s, c) => s + (+c.pct || 0), 0);
+  if (!pct) return { value: 0, planned: false };
+  const d = B.distribution({ data: S().data, model, ids, from: iso(y, m, 1), to: iso(y, m, daysInMonth(y, m)), metas: [...S().metas.values()], piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId });
+  return { value: Math.round(d.base.planned * pct / 100), planned: d.income.planned > 0 };
+}
+const trRun = (cfg, horizons) => SIM.simulate({
+  data: S().data, piggy: { id: 'treasury', type: 'real', accountId: treasury().accountId }, cfg, today: C.today(), horizons,
+  account: S().accounts.get(treasury().accountId), metas: [...S().metas.values()].filter(m => !m.archived),
+  isHoliday: S().isHoliday, defaultAccount: S().settings.defaultAccount, planMonth: treasuryPlanMonth,
+});
+
+function treasuryView() {
+  let years = null, details = false;
+  return {
+    get title() { return treasuryName(); },
+    get sub() { return treasury().accountId ? 'Investimentos de longo prazo' : ''; },
+    get right() { return treasury().accountId ? { icon: 'gear', fn: () => push(treasuryConfigView()) } : null; },
+    body: () => {
+      const tr = treasury(), { money, dmy, esc } = C;
+      if (!tr.accountId || !S().accounts.get(tr.accountId)) {
+        const reals = [...S().piggies.values()].filter(p => p.type === 'real' && !p.archived);
+        return `<div class="sim-card"><div class="sim-main"><small>Tesouro</small><b class="plain">Acompanhe seus investimentos</b>
+            <span>Registre aportes reais, veja o patrimônio investido, as projeções e quanto ele pode render por mês se você parar de aportar.</span></div>
+            <button class="primary-btn" data-a="setup">Começar</button>
+            ${reals.map(p => `<button class="primary-btn ghost" data-a="adopt" data-id="${p.id}">Usar o cofrinho “${esc(p.name)}” como Tesouro</button>`).join('')}
           </div>
-          <p class="sim-src-line">Fontes: ${srcTxt} · <button class="link-btn" data-a="config">ajustar</button></p>`
-          : `<div class="sim-main"><small>Simulação desligada</small><span>Escolha de onde vem o dinheiro para ver a projeção.</span></div><button class="primary-btn ghost" data-a="config">Escolher contas</button>`}
-        </div>`;
-      // ---------- meta da semana (ação do dia a dia) ----------
-      const weekly = accs.filter(a => cfg.sources[a.id].on && cfg.sources[a.id].mode === 'weekly' && cfg.sources[a.id].weekly > 0);
-      const weekRows = weekly.map(a => {
-        const w = SIM.weekProgress(r.flows, a.id, cfg.sources[a.id].weekly, t, S().settings.mondayFirst);
-        const done = w.left === 0, blocked = p.type !== 'real' && a.id !== p.accountId;
-        return `<div class="sim-week"><div class="grow"><b>${esc(a.name)} · semana ${dm(w.start)} a ${dm(w.end)}</b>
-            <span>${money(w.done)} de ${money(cfg.sources[a.id].weekly)} · ${done ? 'meta da semana cumprida' : `faltam ${money(w.left)}`}</span>
-            ${progress(w.done / cfg.sources[a.id].weekly, p.color || 'var(--accent)')}
-            ${blocked ? '<span class="muted small">Cofrinho virtual de outra conta: para guardar daqui, use um cofrinho real.</span>' : ''}</div>
-          ${done || blocked ? '' : `<button class="primary-btn ghost sm" data-a="inFrom" data-id="${a.id}">Guardar</button>`}</div>`;
-      }).join('');
-      // ---------- detalhes (abrem só quando o usuário quiser) ----------
+          <p class="hint">O Tesouro é separado dos cofrinhos: cofrinhos guardam dinheiro para objetivos; o Tesouro acompanha dinheiro investido.</p>`;
+      }
+      const v = trView(), cfg = simCfgOf(), accs = simSources(), t = C.today();
+      const r = trRun(cfg, v.horizons);
+      if (!years || !v.horizons.includes(years)) years = v.horizons.includes(10) ? 10 : v.horizons[v.horizons.length - 1];
+      const h = r.results.find(x => x.years === years) || r.results[r.results.length - 1];
+      const on = accs.filter(a => cfg.sources[a.id] && cfg.sources[a.id].on);
+      const saved = r.saved;
+      const showReal = v.valueMode !== 'nominal', showNom = v.valueMode !== 'real';
+      const projVal = showReal ? h.real : h.nominal, projSub = showReal ? 'em dinheiro de hoje' : 'em valores da época';
+      const yl = `${years} ${years === 1 ? 'ano' : 'anos'}`;
+      const blocks = {
+        saved: () => `<div class="sim-have"><small>Patrimônio investido</small><b>${money(saved)}</b></div>`,
+        projected: big => `<div class="sim-main${big ? '' : ' small'}"><small>Em ${yl} você poderá acumular</small><b>${money(projVal)}*</b><span>${projSub} · ${dmy(h.date)}${showReal && showNom ? ` · nominal ${money(h.nominal)}` : ''}</span></div>`,
+        income: big => `<div class="sim-stop${big ? ' big' : ''}"><small>Se parar de aportar em ${dmy(h.date)}, poderá render</small>
+            <b>${money(showReal ? h.incomeMonthReal : h.incomeMonthNominal)} <em>por mês*</em></b>
+            <span>${money(showReal ? h.incomeYearReal : h.incomeYearNominal)} por ano · ${showReal ? 'em dinheiro de hoje' : 'em valores da época'}</span>
+            ${showReal && showNom ? `<span class="nom">Em valores da época: ${money(h.incomeMonthNominal)}/mês · ${money(h.incomeYearNominal)}/ano</span>` : ''}</div>`,
+        breakdown: () => `<div class="sim-facts"><div><small>Valor nominal futuro</small><b>${money(h.nominal)}</b></div><div><small>Aportado</small><b>${money(h.contributed)}</b></div><div><small>Rendimentos</small><b class="pos">${money(h.yield)}</b></div></div>`,
+        contrib: () => `<div class="sim-facts"><div><small>Contribuição mensal média</small><b>${money(r.perMonth)}</b></div><div><small>Por semana</small><b>${money(r.perWeek)}</b></div><div><small>Base</small><b>${cfg.basis === 'plan' ? 'divisão da renda' : 'sobra mensal'}</b></div></div>`,
+        sources: () => `<p class="sim-src-line">${cfg.basis === 'plan' ? 'Divisão da renda' : 'Sobra'} de ${on.length ? on.map(a => esc(a.name)).join(' + ') : 'nenhuma conta'} · ~${money(r.perMonth)}/mês · IPCA + ${pctTxt(cfg.rate)}% a.a.</p>`,
+      };
+      const hl = v.highlight === 'income' ? 'income' : 'projected';
+      const visible = v.order.filter(k => !v.hidden.includes(k));
+      const main = on.length ? visible.map(k => (k === 'saved' ? blocks.saved() : blocks[k](k === hl))).join('')
+        : `${visible.includes('saved') ? blocks.saved() : ''}<div class="sim-main"><small>Projeção desligada</small><span>Escolha, na engrenagem, de quais contas vem o dinheiro para a projeção.</span></div>`;
+      const years$ = v.horizons.length > 1 ? `<div class="segmented sim-years">${v.horizons.map(n => `<button class="${n === years ? 'on' : ''}" data-a="years" data-id="${n}">${n} ${n === 1 ? 'ano' : 'anos'}</button>`).join('')}</div>` : '';
+      // o seletor de prazos fica logo depois do patrimônio investido
+      const idx = main.indexOf('</div>', main.indexOf('sim-have')) + 6;
+      const card = `<div class="sim-card">${visible.includes('saved') && on.length ? main.slice(0, idx) + years$ + main.slice(idx) : years$ + main}</div>`;
       let more = '';
       if (details) {
-        const moves = itemsFor(it => it.piggyId === id || (p.type === 'real' && (it.accountId === p.accountId || it.toAccountId === p.accountId)), addDays(t, -365), addDays(t, 60));
+        const moves = itemsFor(it => it.accountId === tr.accountId || it.toAccountId === tr.accountId, addDays(t, -3650), addDays(t, 60));
         const tab = r.results.map(x => `<div class="sim-row"><span class="h">${x.years} ${x.years === 1 ? 'ano' : 'anos'}<small>${dmy(x.date)}</small></span>
             <span class="v"><b>${money(x.real)}</b><small>hoje</small></span><span class="v">${money(x.nominal)}<small>nominal</small></span>
-            <span class="v">${money(x.contributed)}<small>aportado</small></span><span class="v pos">${money(x.yield)}<small>rendimento</small></span></div>`).join('');
+            <span class="v">${money(x.contributed)}<small>aportado</small></span><span class="v pos">${money(x.yield)}<small>rendimento</small></span>
+            <span class="v stop">${money(x.incomeMonthReal)}/mês<small>se parar de aportar</small></span></div>`).join('');
         let cmp = '';
         if (accs.length > 1) {
-          const scen = accs.map(a => ({ n: `Só ${a.name}`, c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { ...cfg.sources[x.id], on: x.id === a.id }])) } }));
-          scen.push({ n: 'Todas as contas', c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { ...cfg.sources[x.id], on: true }])) } });
-          cmp = `<div class="section-label"><span>COMPARAR EM ${years} ${years === 1 ? 'ANO' : 'ANOS'}</span><span>em dinheiro de hoje</span></div>
-            ${scen.map(sc => { const rr = simRun(p, sc.c).results.find(x => x.years === years); return `<div class="kv"><span>${esc(sc.n)}</span><span>${money(rr.real)}</span></div>`; }).join('')}`;
+          const scen = accs.map(a => ({ n: `Só ${a.name}`, c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { on: x.id === a.id }])) } }));
+          scen.push({ n: 'Todas as contas', c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { on: true }])) } });
+          cmp = `<div class="section-label"><span>COMPARAR FONTES EM ${yl.toUpperCase()}</span><span>hoje · renda/mês</span></div>
+            ${scen.map(sc => { const rr = trRun(sc.c, [years]).results[0]; return `<div class="kv"><span>${esc(sc.n)}</span><span>${money(rr.real)} · ${money(rr.incomeMonthReal)}/mês</span></div>`; }).join('')}`;
         }
-        const { y, m } = parse(t);
-        const surplus = r.monthly.length ? `<div class="section-label"><span>SOBRAS PREVISTAS</span><span>contas pela sobra do mês</span></div>
-          <div class="sim-months">${r.monthly.map((v, k) => { const mm = addMonths(y, m, k); return `<span><small>${MONTHS[mm.m - 1].slice(0, 3)}/${String(mm.y).slice(2)}</small><b class="${v ? '' : 'muted'}">${money(v)}</b></span>`; }).join('')}</div>
-          <p class="hint">Mês negativo conta como zero. Depois de 12 meses, a projeção usa a média: ${money(Math.round(r.monthly.reduce((a2, v) => a2 + v, 0) / 12))}/mês.</p>` : '';
-        const goal = p.goal ? `<div class="section-label"><span>PATRIMÔNIO DESEJADO</span></div>
-          <div class="kv"><span>Valor desejado</span><span>${money(p.goal)}</span></div>
-          <div class="kv"><span>Falta</span><span>${money(Math.max(0, p.goal - saved))}</span></div>
-          <div class="kv"><span>Atingido pela projeção</span><span>${r.goalAt ? (r.goalAt <= t ? 'já atingido' : `${MONTHS[parse(r.goalAt).m - 1].toLowerCase()} de ${parse(r.goalAt).y}`) : 'não em 40 anos'}</span></div>` : '';
+        const surplus = r.months.length ? `<div class="section-label"><span>CONTRIBUIÇÕES PREVISTAS</span><span>${cfg.basis === 'plan' ? 'divisão da renda' : 'sobras com metas'}</span></div>
+          <div class="sim-months">${r.months.map(x => `<span><small>${MONTHS[x.m - 1].slice(0, 3)}/${String(x.y).slice(2)}</small><b class="${x.value ? '' : 'muted'}">${x.planned ? money(x.value) : 'sem plano'}</b></span>`).join('')}</div>
+          <p class="hint">Mês planejado negativo conta como zero. Mês sem planejamento e os meses depois do 12º usam a média dos meses planejados: ${money(r.avg)}/mês.</p>` : '';
         more = `<div class="sim-more">
-          <div class="section-label"><span>DINHEIRO REAL</span></div>
+          <div class="section-label"><span>DINHEIRO INVESTIDO DE VERDADE</span></div>
           <div class="kv"><span>Total aportado</span><span>${money(r.deposited)}</span></div>
           ${r.withdrawn ? `<div class="kv"><span>Retirado</span><span>${money(r.withdrawn)}</span></div>` : ''}
           <div class="kv"><span>Valor estimado com rendimento</span><span>${money(r.startValue)}</span></div>
           ${on.length ? `<div class="section-label"><span>PROJEÇÃO</span></div>
           <div class="kv"><span>Contribuição mensal média</span><span>${money(r.perMonth)}</span></div>
           <div class="kv"><span>Por semana</span><span>${money(r.perWeek)}</span></div>
-          <div class="kv"><span>Previsto até o fim do mês</span><span>${money(r.contributions.filter(x => x.date.slice(0, 7) === t.slice(0, 7)).reduce((a2, x) => a2 + x.amount, 0))}</span></div>
           <div class="sim-tab">${tab}</div>${surplus}${cmp}` : ''}
-          ${goal}
-          <div class="section-label"><span>DEPÓSITOS E RETIRADAS</span></div>
-          ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}
+          <div class="section-label"><span>APORTES E RETIRADAS</span></div>
+          ${moves.map(it => movementRow(it, tr.accountId)).join('') || '<p class="hint">Nenhum aporte registrado ainda.</p>'}
         </div>`;
       }
       return `${card}
-        <div class="btn-row"><button class="primary-btn" data-a="in">Guardar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
-        ${weekRows ? `<div class="section-label"><span>META DA SEMANA</span></div>${weekRows}` : ''}
-        <button class="sim-toggle${details ? ' on' : ''}" data-a="details">${details ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
-        ${more}
+        <div class="btn-row"><button class="primary-btn" data-a="in">Aportar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
+        ${v.showDetails ? `<button class="sim-toggle${details ? ' on' : ''}" data-a="details">${details ? 'Ocultar detalhes' : 'Ver detalhes'}</button>${more}` : ''}
         <ul class="sim-foot">
-          <li>*Projeção se as metas de economia forem cumpridas; não é rendimento garantido.</li>
-          <li>*Calculada com os dados do app: sobras previstas, metas semanais e o que você já guardou.</li>
-          <li>*Só depósitos reais contam como dinheiro guardado. Inflação estimada: ${pctTxt(cfg.ipca)}% a.a.</li>
+          <li>*Projeção se as contribuições planejadas acontecerem; não é rendimento garantido.</li>
+          <li>*Só aportes registrados contam como patrimônio investido. Inflação estimada: ${pctTxt(cfg.ipca)}% a.a.</li>
+          <li>*Renda se parar de aportar: o patrimônio continua investido, sem novos aportes. Em dinheiro de hoje, é quanto dá para tirar sem perder poder de compra.</li>
         </ul>`;
     },
     actions: {
-      in: () => piggyMove(id, 'in'), out: () => piggyMove(id, 'out'), goDay,
+      setup: async () => {
+        const a = { id: C.uid(), name: 'Tesouro', type: 'treasury', institution: '', initialBalance: 0, color: '#45cf7f', purpose: 'Investimentos de longo prazo', includeInTotal: true, archived: false, allowedTags: [], rules: [], order: S().accounts.size, createdAt: C.nowISO() };
+        await saveStore('accounts', 'accounts', a, 'Tesouro criado');
+        await saveTreasury({ accountId: a.id });
+      },
+      adopt: async pid => {
+        const p = S().piggies.get(pid); if (!p) return;
+        if (!(await C.confirmDlg(`Usar “${C.esc(p.name)}” como Tesouro?`, 'A conta separada deste cofrinho e todo o histórico passam para a aba Tesouro. O dinheiro não muda; ele só deixa de aparecer como cofrinho.', 'Usar como Tesouro'))) return;
+        const acc = S().accounts.get(p.accountId);
+        if (acc) await saveStore('accounts', 'accounts', { ...acc, type: 'treasury' }, `Cofrinho ${p.name} passou a ser o Tesouro`);
+        await saveTreasury({ accountId: p.accountId, sim: p.sim || treasury().sim });
+        await saveStore('piggies', 'piggies', { ...p, archived: true, movedToTreasury: true });
+      },
       years: n => { years = +n; render(); },
       details: () => { details = !details; render(); },
-      config: () => push(simConfigView(id)),
-      inFrom: acc => { const p = pig(), cfg = simCfgOf(p); const w = SIM.weekProgress(SIM.piggyFlows(p, S().data, C.today(), S().accounts.get(p.accountId)), acc, cfg.sources[acc].weekly, C.today(), S().settings.mondayFirst); piggyMove(id, 'in', { from: acc, amount: w.left }); },
+      config: () => push(treasuryConfigView()),
+      in: () => treasuryMove('in'), out: () => treasuryMove('out'), goDay,
     },
   };
-  return view;
 }
 
-/** Configuração da simulação (fica fora da tela principal): fontes, meta semanal e taxas. */
-function simConfigView(id) {
-  const pig = () => S().piggies.get(id);
-  const parsePct = v => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+/** Aporte (de uma conta ou de um cofrinho) e retirada (para uma conta). Tudo é transferência real. */
+async function treasuryMove(dir, preset = {}) {
+  const tr = treasury(); if (!tr.accountId) return;
+  const b = bal(), { money, esc, today } = C;
+  const tAcc = tr.accountId, invested = (b.accounts.get(tAcc) || {}).real || 0;
+  const accs = C.accountsList().filter(a => a.id !== tAcc && a.type !== 'treasury' && a.type !== 'piggy');
+  const pigs = [...S().piggies.values()].filter(p => !p.archived).map(p => ({ p, saved: (b.piggies.get(p.id) || {}).saved || 0 })).filter(x => x.saved > 0);
+  const opts = [
+    ...accs.map(a => [`acc:${a.id}`, `${dir === 'in' ? 'De' : 'Para'} ${a.name} (${money((b.accounts.get(a.id) || {}).real || 0)})`]),
+    ...(dir === 'in' ? pigs.map(x => [`piggy:${x.p.id}`, `Do cofrinho ${x.p.name} (${money(x.saved)})`]) : []),
+  ];
+  if (!opts.length) { C.toast('Cadastre uma conta primeiro'); return; }
+  const res = await C.dialog({
+    title: dir === 'in' ? `Aportar no ${treasuryName()}` : `Retirar do ${treasuryName()}`,
+    html: `<input type="text" inputmode="decimal" id="tmAmount" placeholder="0,00" value="${preset.amount ? C.moneyInput(preset.amount) : ''}">
+      <select id="tmFrom">${opts.map(([v, l]) => `<option value="${v}" ${v === preset.from ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <input type="date" id="tmDate" value="${today()}">
+      <p class="small">${dir === 'in' ? 'É uma transferência: sai da conta ou do cofrinho e entra no Tesouro. Não é receita nem despesa.' : `Investido: ${money(invested)}`}</p>`,
+    actions: [{ label: 'Cancelar', value: null }, {
+      label: dir === 'in' ? 'Aportar' : 'Retirar', cls: 'primary',
+      validate: () => {
+        const v = C.parseMoney(document.getElementById('tmAmount').value);
+        if (!(v > 0)) { C.toast('Informe o valor'); return false; }
+        const from = document.getElementById('tmFrom').value;
+        if (dir === 'out' && v > invested) { C.toast(`Só há ${money(invested)} investidos`); return false; }
+        if (from.startsWith('piggy:')) { const x = pigs.find(q => 'piggy:' + q.p.id === from); if (x && v > x.saved) { C.toast(`O cofrinho tem ${money(x.saved)}`); return false; } }
+        return true;
+      },
+      value: () => ({ amount: C.parseMoney(document.getElementById('tmAmount').value), from: document.getElementById('tmFrom').value, date: document.getElementById('tmDate').value || today() }),
+    }],
+    onOpen: body => setTimeout(() => body.querySelector('#tmAmount').focus(), 150),
+  });
+  if (!res) return;
+  const [kind, id] = res.from.split(':');
+  let ch;
+  if (dir === 'out') ch = onceEntry({ kind: 'transfer', amount: res.amount, date: res.date, accountId: tAcc, toAccountId: id, title: `Retirada do ${treasuryName()}` });
+  else if (kind === 'acc') ch = onceEntry({ kind: 'transfer', amount: res.amount, date: res.date, accountId: id, toAccountId: tAcc, title: `Aporte no ${treasuryName()}` });
+  else {
+    const p = S().piggies.get(id);
+    if (p.type === 'real') ch = onceEntry({ kind: 'transfer', amount: res.amount, date: res.date, accountId: p.accountId, toAccountId: tAcc, title: `Aporte no ${treasuryName()} (do cofrinho ${p.name})` });
+    else {
+      // cofrinho virtual: libera a reserva e transfere da conta onde ela estava
+      ch = onceEntry({ kind: 'release', amount: res.amount, date: res.date, accountId: p.accountId, piggyId: p.id, title: `Para o ${treasuryName()}` });
+      C.ops.mergeChanges(ch, onceEntry({ kind: 'transfer', amount: res.amount, date: res.date, accountId: p.accountId, toAccountId: tAcc, title: `Aporte no ${treasuryName()} (do cofrinho ${p.name})` }));
+    }
+  }
+  await C.commit(dir === 'in' ? `${money(res.amount)} aportados no ${treasuryName()}` : `${money(res.amount)} retirados do ${treasuryName()}`, ch);
+}
+
+/** Engrenagem do Tesouro: fontes, base, rendimento, o que aparece na tela, destaque, ordem e prazos. */
+function treasuryConfigView() {
+  const parsePct = x => { const n = parseFloat(String(x).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+  const saveSim = cfg => saveTreasury({ sim: { rate: cfg.rate, ipca: cfg.ipca, basis: cfg.basis, sources: Object.fromEntries(Object.entries(cfg.sources).map(([k, s]) => [k, { on: !!s.on }])) } });
+  const saveView = v => saveTreasury({ view: v });
   return {
-    title: 'Simulação', get sub() { return C.esc((pig() || {}).name || ''); },
+    title: 'Configurações', get sub() { return C.esc(treasuryName()); },
     body: () => {
-      const p = pig(); if (!p) return '';
-      const cfg = simCfgOf(p), { money, esc } = C, rn = SIM.nominalRate(cfg.rate, cfg.ipca);
-      const srcRows = simSources().map(a => {
-        const sc = cfg.sources[a.id];
-        return `<div class="sim-src${sc.on ? ' on' : ''}">
-          <label class="row"><span class="grow"><b>${esc(a.name)}</b><small>${sc.mode === 'weekly' ? (sc.weekly ? `meta de ${money(sc.weekly)} por semana` : 'informe a meta semanal') : 'sobra planejada de cada mês'}</small></span>
-            <input type="checkbox" class="switch" data-k="src-on" data-acc="${a.id}" ${sc.on ? 'checked' : ''}></label>
-          ${sc.on ? `<div class="sim-mode"><div class="segmented seg-sm"><button class="${sc.mode === 'surplus' ? 'on' : ''}" data-a="mode" data-id="${a.id}|surplus">Sobra do mês</button><button class="${sc.mode === 'weekly' ? 'on' : ''}" data-a="mode" data-id="${a.id}|weekly">Meta semanal</button></div>
-            ${sc.mode === 'weekly' ? `<label class="row field"><span>Guardar por semana</span><input type="text" inputmode="decimal" placeholder="0,00" data-k="src-weekly" data-acc="${a.id}" value="${C.moneyInput(sc.weekly)}"></label>` : ''}</div>` : ''}
-        </div>`;
-      }).join('');
-      return `<div class="group-title">De onde vem o dinheiro</div>
-        <div class="sim-srcs">${srcRows}</div>
+      const cfg = simCfgOf(), v = trView(), { esc } = C, rn = SIM.nominalRate(cfg.rate, cfg.ipca);
+      const planPct = B.liveCats(B.activeModelOf(budgetCfg())).filter(c => (c.piggyIds || []).includes(B.TREASURY)).reduce((s, c) => s + (+c.pct || 0), 0);
+      const sw = (k, on, extra = '') => `<input type="checkbox" class="switch" data-k="${k}" ${extra} ${on ? 'checked' : ''}>`;
+      return `<div class="group-title">Contas que entram na projeção</div>
+        <div class="group sim-srcs">${simSources().map(a => `<label class="row"><span class="grow"><b>${esc(a.name)}</b></span>${sw('src-on', cfg.sources[a.id] && cfg.sources[a.id].on, `data-acc="${a.id}"`)}</label>`).join('')}</div>
+        <div class="group-title">Fonte do dinheiro</div>
+        <div class="segmented seg-sm"><button class="${cfg.basis !== 'plan' ? 'on' : ''}" data-a="basis" data-id="surplus">Sobra mensal</button><button class="${cfg.basis === 'plan' ? 'on' : ''}" data-a="basis" data-id="plan">Divisão da renda</button></div>
+        <p class="hint">${cfg.basis === 'plan' ? (planPct ? `Usa ${pctTxt(planPct)}% da renda dessas contas, conforme as categorias da divisão da renda ligadas ao Tesouro.` : 'Nenhuma categoria da divisão da renda está ligada ao Tesouro. Ligue uma em Metas › Divisão da renda.') : 'Usa a sobra planejada de cada mês dessas contas (lançamentos, compromissos e Metas).'}</p>
         <div class="group-title">Rendimento</div>
         <div class="group sim-rates">
           <label class="row field"><span>Acima do IPCA (% a.a.)</span><input type="text" inputmode="decimal" data-k="rate" value="${pctTxt(cfg.rate)}"></label>
           <label class="row field"><span>IPCA estimado (% a.a.)</span><input type="text" inputmode="decimal" data-k="ipca" value="${pctTxt(cfg.ipca)}"></label>
         </div>
-        <p class="hint">IPCA + ${pctTxt(cfg.rate)}% ≈ ${pctTxt(rn * 100)}% ao ano nominal (taxas compostas, não somadas). Padrão: IPCA + ${pctTxt(SIM.SIM_DEFAULT.rate)}% e IPCA de ${pctTxt(SIM.SIM_DEFAULT.ipca)}%. Tudo é salvo na hora.</p>`;
+        <p class="hint">IPCA + ${pctTxt(cfg.rate)}% ≈ ${pctTxt(rn * 100)}% ao ano nominal (taxas compostas, não somadas).</p>
+        <div class="group-title">Prazos das projeções</div>
+        <div class="chips">${HORIZON_CHOICES.map(n => `<button type="button" class="chip${v.horizons.includes(n) ? ' on' : ''}" data-a="hz" data-id="${n}">${n} ${n === 1 ? 'ano' : 'anos'}</button>`).join('')}</div>
+        <div class="group-title">Valores</div>
+        <div class="segmented seg-sm"><button class="${v.valueMode === 'both' ? 'on' : ''}" data-a="vm" data-id="both">Hoje e nominal</button><button class="${v.valueMode === 'real' ? 'on' : ''}" data-a="vm" data-id="real">Só hoje</button><button class="${v.valueMode === 'nominal' ? 'on' : ''}" data-a="vm" data-id="nominal">Só nominal</button></div>
+        <div class="group-title">Maior destaque</div>
+        <div class="segmented seg-sm"><button class="${v.highlight !== 'income' ? 'on' : ''}" data-a="hl" data-id="projected">Patrimônio projetado</button><button class="${v.highlight === 'income' ? 'on' : ''}" data-a="hl" data-id="income">Renda se parar</button></div>
+        <div class="group-title">Tela principal · o que aparece e em que ordem</div>
+        <div class="group">${v.order.map((k, i) => `<div class="row tr-item"><span class="grow">${esc(TR_ITEMS[k])}</span>
+            <button class="icon-btn sm" data-a="up" data-id="${k}" ${i ? '' : 'disabled'} aria-label="Subir">${C.icon('left')}</button><button class="icon-btn sm" data-a="down" data-id="${k}" ${i < v.order.length - 1 ? '' : 'disabled'} aria-label="Descer">${C.icon('right')}</button>
+            ${sw('item-on', !v.hidden.includes(k), `data-item="${k}"`)}</div>`).join('')}</div>
+        <div class="group"><label class="row"><span class="grow">Botão "Ver detalhes"</span>${sw('details-on', v.showDetails)}</label></div>
+        <p class="hint">Tudo é salvo na hora. O nome do Tesouro muda em Contas, como qualquer conta.</p>`;
     },
     onField: (el2, type) => {
-      const p = pig(); if (!p || type !== 'change') return;
-      const cfg = simCfgOf(p), k = el2.dataset.k;
-      if (k === 'src-on') { cfg.sources[el2.dataset.acc].on = el2.checked; return saveSim(id, cfg); }
-      if (k === 'src-weekly') { cfg.sources[el2.dataset.acc].weekly = Math.max(0, C.parseMoney(el2.value) || 0); return saveSim(id, cfg); }
+      if (type !== 'change') return;
+      const cfg = simCfgOf(), v = trView(), k = el2.dataset.k;
+      if (k === 'src-on') { cfg.sources[el2.dataset.acc] = { on: el2.checked }; return saveSim(cfg); }
+      if (k === 'item-on') { const set = new Set(v.hidden); el2.checked ? set.delete(el2.dataset.item) : set.add(el2.dataset.item); return saveView({ ...v, hidden: [...set] }); }
+      if (k === 'details-on') return saveView({ ...v, showDetails: el2.checked });
       if (k === 'rate' || k === 'ipca') {
-        const v = parsePct(el2.value);
-        if (v == null || v < -50 || v > 100) { C.toast('Informe uma taxa válida'); render(); return; }
-        cfg[k] = v; return saveSim(id, cfg);
+        const x = parsePct(el2.value);
+        if (x == null || x < -50 || x > 100) { C.toast('Informe uma taxa válida'); render(); return; }
+        cfg[k] = x; return saveSim(cfg);
       }
     },
-    actions: { mode: v => { const [acc, mode] = v.split('|'); const cfg = simCfgOf(pig()); cfg.sources[acc].mode = mode; saveSim(id, cfg); } },
+    actions: {
+      basis: b2 => { const cfg = simCfgOf(); cfg.basis = b2; saveSim(cfg); },
+      hz: n => { const v = trView(), set = new Set(v.horizons); set.has(+n) ? set.delete(+n) : set.add(+n); if (!set.size) { C.toast('Deixe pelo menos um prazo'); return; } saveView({ ...v, horizons: [...set] }); },
+      vm: m => saveView({ ...trView(), valueMode: m }),
+      hl: k => saveView({ ...trView(), highlight: k }),
+      up: k => { const v = trView(), o = [...v.order], i = o.indexOf(k); if (i > 0) { [o[i - 1], o[i]] = [o[i], o[i - 1]]; saveView({ ...v, order: o }); } },
+      down: k => { const v = trView(), o = [...v.order], i = o.indexOf(k); if (i >= 0 && i < o.length - 1) { [o[i + 1], o[i]] = [o[i], o[i + 1]]; saveView({ ...v, order: o }); } },
+    },
   };
 }
 
@@ -697,7 +833,7 @@ async function piggyMove(id, dir, preset = {}) {
   const p = S().piggies.get(id);
   const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0;
   const { money, esc, today } = C;
-  const accs = C.accountsList().filter(a => a.id !== p.accountId);
+  const accs = C.accountsList().filter(a => a.id !== p.accountId && a.type !== 'treasury');
   const real = p.type === 'real';
   const res = await C.dialog({
     title: dir === 'in' ? `Guardar em ${p.name}` : `Retirar de ${p.name}`,
@@ -742,8 +878,6 @@ function piggyForm(p = null) {
       { k: 'color', label: 'Cor', type: 'color' },
       { k: 'archived', label: 'Arquivar', type: 'switch', show: () => !!p },
     ],
-    extra: () => (p ? '<div class="group-title">Simulação</div><div class="group"><button class="row action" data-a="simcfg">Contas e rendimento da simulação</button></div>' : ''),
-    extraActions: { simcfg: () => push(simConfigView(p.id)) },
     onSave: async v => {
       if (p && v.archived && !p.archived && !(await resolveRuleLinks('piggy:' + p.id, p.name))) return false;
       const obj = { ...(p || { id: C.uid(), createdAt: C.nowISO() }), ...v };
@@ -780,87 +914,233 @@ function piggyForm(p = null) {
 
 // ------------------------------------------------------------------ METAS E ORÇAMENTOS
 function metasView() {
-  // "bolacha" do app antigo: uma rosca por meta (Despesas | Receitas), no mês exibido no calendário
-  let kind = 'expense', sel = -1;
+  // a bolacha mostra a divisão de 100% da renda do mês exibido (gastos e dinheiro guardado juntos)
+  let sel = null, only = null;
   const view = {
     title: 'Metas', right: { icon: 'plus', fn: () => push(metaForm()) },
     body: () => {
       const { y, m } = S().view;
-      const all = [...S().metas.values()].filter(C.metaVisible);
-      // gastos primeiro, depois receitas, na ordem das metas
-      const list = all.filter(x => (x.kind || 'expense') === kind).sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
+      const { cfg, d } = budgetDist(iso(y, m, 1), iso(y, m, daysInMonth(y, m)), only);
+      const all = [...S().metas.values()].filter(C.metaVisible).sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
       const bctx = C.budgetCtx();
-      const seg = `<div class="segmented seg-sm"><button class="${kind === 'expense' ? 'on' : ''}" data-a="kind" data-id="expense">Despesas</button><button class="${kind === 'income' ? 'on' : ''}" data-a="kind" data-id="income">Receitas</button></div>`;
-      const cards = list.map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
-      return `<div class="donut-card"><div class="donut-head"><b>${MONTHS[m - 1]} ${y}</b>${seg}</div>${bolacha(list, kind, y, m, sel)}</div>`
-        + (cards || `<div class="empty">Nenhuma meta de ${kind === 'income' ? 'receita' : 'gasto'}. Toque em + para criar.</div>`);
+      const cards = k => all.filter(x => (x.kind || 'expense') === k).map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
+      const exp = cards('expense'), inc = cards('income');
+      return `<div class="donut-card"><div class="donut-head"><b>Divisão da renda · ${MONTHS[m - 1]} ${y}</b><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar a divisão da renda">${C.icon('gear')}</button></div>
+          <p class="hint dist-model">${C.esc(B.activeModelOf(cfg).name)}</p>${rendaBolacha(cfg, d, sel, only, 'd')}</div>
+        ${exp ? `<div class="section-label"><span>METAS DE GASTOS</span></div>${exp}` : ''}
+        ${inc ? `<div class="section-label"><span>METAS DE RECEITAS</span></div>${inc}` : ''}
+        ${exp || inc ? '' : '<div class="empty">Nenhuma meta. Toque em + para criar.</div>'}`;
     },
     actions: {
       open: id => push(metaDetail(id)),
-      kind: id => { kind = id; sel = -1; render(); },
-      sel: id => { sel = sel === +id ? -1 : +id; render(); },
+      dsel: id => { sel = String(sel) === String(id) ? null : id; render(); },
+      dacc: id => { only = id || null; sel = null; render(); },
+      bcfg: () => push(budgetConfigView()),
+      goDay,
     },
   };
   return view;
 }
 
-/** Limite de uma meta convertido para o mês (semana, dia útil, fim de semana… viram valor mensal). */
-function monthLimit(meta, y, m) {
-  const a = meta.amount || 0;
-  if (!a) return 0;
-  const n = daysInMonth(y, m), isH = S().isHoliday;
-  let count = 0;
-  for (let d = 1; d <= n; d++) {
-    const ds = iso(y, m, d), w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(), off = w === 0 || w === 6 || !!isH(ds);
-    if (meta.period === 'day' || (meta.period === 'businessDay' && !off) || (meta.period === 'weekend' && off)) count++;
+// ------------------------------------------------------------------ DIVISÃO DA RENDA (bolacha de 100%)
+function budgetCfg() {
+  const cfg = B.budgetConfig(S().settings, C.uid);
+  // o modelo inicial é gravado na primeira vez, para os ids das categorias ficarem estáveis
+  if (!S().settings.budget || !Array.isArray(S().settings.budget.models) || !S().settings.budget.models.length) {
+    S().settings.budget = { ...(S().settings.budget || {}), models: cfg.models, activeModel: cfg.activeModel };
+    C.saveSettings();
   }
-  switch (meta.period) {
-    case 'month': case 'custom': return a;
-    case 'year': return Math.round(a / 12);
-    case 'week': return Math.round(a * n / 7);
-    default: return a * count; // por dia, por dia útil, por fim de semana/feriado
+  return cfg;
+}
+function saveBudget(cfg) {
+  S().settings.budget = { models: cfg.models, activeModel: cfg.activeModel, accounts: cfg.accounts, showOnCalendar: cfg.showOnCalendar, showLegendValues: cfg.showLegendValues, showPlanVsReal: cfg.showPlanVsReal };
+  C.saveSettings(); render(); C.refresh();
+}
+/** Contas da análise: as escolhidas na configuração (ou a conta exibida). `only` = ver uma conta só. */
+function budgetIds(cfg, only) {
+  const valid = cfg.accounts.filter(id => S().accounts.get(id) && !S().accounts.get(id).archived);
+  const ids = valid.length ? valid : [...(S().set || [])];
+  return only && ids.includes(only) ? [only] : ids;
+}
+function budgetDist(from, to, only) {
+  const cfg = budgetCfg();
+  return { cfg, d: B.distribution({ data: S().data, model: B.activeModelOf(cfg), ids: budgetIds(cfg, only), from, to, metas: [...S().metas.values()], piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId }) };
+}
+/**
+ * A bolacha da renda: cada categoria é uma fatia do tamanho do que o plano destina (ou do que já foi, se passou);
+ * a parte forte é o realizado (gasto pago ou depósito feito), a apagada é o que ainda cabe. Excesso fica marcado em vermelho.
+ * `act` = prefixo das ações (dsel/dacc), para funcionar na página de Metas e embaixo do calendário.
+ */
+function rendaBolacha(cfg, d, sel, only, act = 'd') {
+  const { money, esc } = C;
+  const base = d.base.planned;
+  const segs = d.cats.map((c, i) => ({ i, n: c.name, col: c.color || '#8cb6e4', size: Math.max(c.target, c.realized), strong: Math.min(c.realized, Math.max(c.target, c.realized)), over: c.kind !== 'save' ? c.over : 0, c }));
+  if (d.other.planned > 0) segs.push({ i: 'o', n: 'Gastos sem categoria', col: '#8E8E93', size: d.other.planned, strong: d.other.realized, over: 0 });
+  if (d.undistributed > 0) segs.push({ i: 'u', n: 'Não distribuído', col: '#3A3A3C', size: d.undistributed, strong: 0, over: 0 });
+  const T = Math.max(base, segs.reduce((s, x) => s + x.size, 0));
+  const accs = budgetIds(cfg, null);
+  const accChips = accs.length > 1 ? `<div class="chips dist-accs"><button type="button" class="chip${!only ? ' on' : ''}" data-a="${act}acc" data-id="">Todas</button>${accs.map(id => `<button type="button" class="chip${only === id ? ' on' : ''}" data-a="${act}acc" data-id="${id}">${esc(C.accName(id))}</button>`).join('')}</div>` : '';
+  if (!base && !segs.some(x => x.size)) return `${accChips}<div class="empty donut-empty">Nenhuma renda prevista neste período${accs.length ? ` em ${accs.map(id => esc(C.accName(id))).join(' + ')}` : ''}.</div>`;
+  const r = 78, Cc = 2 * Math.PI * r, n = segs.filter(x => x.size > 0).length;
+  let off = 0, svg = '';
+  const circ = (col, dash, offset, op, sw) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
+  for (const x of segs) {
+    if (!(x.size > 0)) continue;
+    const len = x.size / T * Cc, L = Math.max(0, len - (n > 1 ? 1.6 : 0)), f = Math.min(L, L * (x.strong / x.size));
+    const dim = sel != null && sel !== '' && String(sel) !== String(x.i) ? 0.3 : 1, sw = String(sel) === String(x.i) ? 32 : 26;
+    if (L - f > 0) svg += circ(x.col, L - f, off + f, 0.28 * dim, sw);
+    if (f > 0) svg += circ(x.col, f, off, dim, sw);
+    if (x.over > 0) { const ol = Math.min(L, x.over / T * Cc); svg += `<circle cx="110" cy="110" r="${r + 18}" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="${ol} ${Cc * 1.3}" stroke-dashoffset="${-(off + L - ol) * (r + 18) / r}" transform="rotate(-90 110 110)"/>`; }
+    off += len;
   }
+  const o = sel != null && sel !== '' ? segs.find(x => String(x.i) === String(sel)) : null;
+  const pct = x => base ? Math.round(x / base * 1000) / 10 : 0;
+  const big = o ? (o.c ? `${pctTxt(o.c.pct)}%` : money(o.size)) : money(base);
+  const small = o ? (o.c ? money(o.c.target) : o.n) : (d.deduction.planned ? `renda após doações` : 'renda do período');
+  const note = o && o.c ? (o.c.kind === 'save' ? `guardado ${money(o.c.realized)}` : `usado ${money(o.c.realized)}`) : `recebido ${money(d.base.received)}`;
+  const legend = segs.map(x => `<button class="${String(sel) === String(x.i) ? 'on' : ''}" data-a="${act}sel" data-id="${x.i}"><i style="background:${x.col}"></i>${esc(x.n)}${x.c ? ` <b>${pctTxt(x.c.pct)}%</b>` : ''}${cfg.showLegendValues ? ` <small>${x.c ? money(x.c.target) : money(x.size)}</small>` : ''}${x.over ? ' <small class="neg">excedeu</small>' : ''}</button>`).join('');
+  let detail = '';
+  if (o && o.c) {
+    const c = o.c, save = c.kind === 'save';
+    const items = [...c.items].sort((a, b) => b.it.date.localeCompare(a.it.date)).slice(0, 8);
+    detail = `<div class="dist-detail">
+      <div class="kv"><span>Planejado</span><span>${pctTxt(c.pct)}% · ${money(c.target)}</span></div>
+      <div class="kv"><span>${save ? 'Guardado de verdade' : 'Gasto (pago)'}</span><span>${money(c.realized)} · ${pctTxt(pct(c.realized))}%</span></div>
+      ${cfg.showPlanVsReal ? `<div class="kv"><span>Previsto no período</span><span>${money(c.planned)}</span></div>` : ''}
+      <div class="kv"><span>${save ? 'Falta guardar' : 'Disponível no limite'}</span><span>${money(c.left)}</span></div>
+      ${c.over ? `<div class="kv"><span>${save ? 'Guardou além do plano' : 'Excedeu o limite'}</span><span class="${save ? 'pos' : 'neg'}">${money(c.over)}</span></div>` : ''}
+      ${!save && c.plannedOver && !c.over ? `<div class="kv"><span>O previsto passa do limite em</span><span class="warn">${money(c.plannedOver)}</span></div>` : ''}
+      ${items.length ? items.map(x => `<button class="card-row" data-a="goDay" data-id="${x.it.date}"><span class="grow"><div class="t">${esc(C.itemTitle(x.it))}</div><div class="s">${C.dm(x.it.date)} · ${x.real ? (save ? 'feito' : 'pago') : 'previsto'}</div></span><span class="v">${money(x.real || x.planned)}</span></button>`).join('') : `<p class="hint">${(c.metaIds || []).length + (c.tagIds || []).length + (c.piggyIds || []).length ? 'Nada lançado nesta categoria no período.' : 'Ligue metas, tags, cofrinhos ou o Tesouro a esta categoria na engrenagem.'}</p>`}
+    </div>`;
+  } else if (o) {
+    const list = o.i === 'o' ? d.other.items : [];
+    detail = `<div class="dist-detail"><p class="hint">${o.i === 'u' ? `${pctTxt(d.pct.missing)}% da renda ainda não tem destino na divisão.` : 'Gastos que não estão ligados a nenhuma categoria da divisão.'}</p>
+      ${list.slice(0, 8).map(x => `<button class="card-row" data-a="goDay" data-id="${x.it.date}"><span class="grow"><div class="t">${esc(C.itemTitle(x.it))}</div><div class="s">${C.dm(x.it.date)}</div></span><span class="v">${money(x.real || x.planned)}</span></button>`).join('')}</div>`;
+  }
+  const warn = !d.pct.ok ? `<p class="hint ${d.pct.missing < 0 ? 'neg' : 'warn'}">A divisão soma ${pctTxt(d.pct.sum)}%: ${d.pct.missing > 0 ? `faltam ${pctTxt(d.pct.missing)}% para distribuir` : `passou ${pctTxt(-d.pct.missing)}%`}.</p>` : '';
+  return `${accChips}<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Divisão da renda">
+      <circle cx="110" cy="110" r="${r}" fill="none" stroke="#2A2A2E" stroke-width="26"/>${svg}
+      <text x="110" y="101" text-anchor="middle" fill="#F5F5F5" font-size="${big.length > 11 ? 15 : 18}" font-weight="700">${esc(big)}</text>
+      <text x="110" y="120" text-anchor="middle" fill="#A5ACB8" font-size="11">${esc(small.length > 26 ? small.slice(0, 25) + '…' : small)}</text>
+      <text x="110" y="136" text-anchor="middle" fill="#A5ACB8" font-size="11">${esc(note)}</text>
+    </svg></div>
+    ${d.deduction.planned ? `<p class="hint center">Doações/dízimo antes da divisão: ${money(d.deduction.planned)} (renda ${money(d.income.planned)})</p>` : ''}
+    <div class="donut-legend dist-legend">${legend}</div>${detail}${warn}`;
 }
 
-/** A bolacha: cada meta é uma fatia do tamanho do limite (ou do que já foi, se passou);
- *  a parte forte é o que já foi pago/recebido, a parte apagada é o que ainda resta. Toque numa fatia para ver os números. */
-function bolacha(list, kind, y, m, sel) {
-  const { money, esc } = C;
-  const from = iso(y, m, 1), to = iso(y, m, daysInMonth(y, m));
-  const items = []; for (const arr of itemsInRange(from, to, S().data).values()) items.push(...arr);
-  const mine = items.filter(it => it.kind === kind && counts(it) && C.accVisible(it));
-  const used = new Set();
-  const rows = list.map(x => {
-    const sm = C.scopedMeta(x); let g = 0;
-    for (const it of mine) { const sh = C.F.metaShare(it, sm); if (sh) { g += sh.real; used.add(it.key); } }
-    return { id: x.id, n: x.name, c: x.color || '#8cb6e4', g, l: monthLimit(x, y, m) };
-  });
-  const loose = mine.filter(it => !used.has(it.key)).reduce((s, it) => s + realizedOf(it), 0);
-  if (loose > 0) rows.push({ id: '', n: 'Sem meta', c: '#8E8E93', g: loose, l: 0 });
-  const L = rows.filter(x => x.l > 0 || x.g > 0);
-  if (!L.length) return `<div class="empty donut-empty">${kind === 'income' ? 'Nenhuma receita' : 'Nenhum gasto nem limite'} neste mês.</div>`;
-  const T = L.reduce((s, x) => s + Math.max(x.l, x.g), 0), G = L.reduce((s, x) => s + x.g, 0), M0 = L.reduce((s, x) => s + x.l, 0);
-  const r = 78, Cc = 2 * Math.PI * r, n = L.length; let off = 0, segs = '';
-  L.forEach((x, i) => {
-    const len = Math.max(x.l, x.g) / T * Cc, Ln = Math.max(0, len - (n > 1 ? 1.6 : 0)), f = Math.min(Ln, x.l ? Ln * (x.g / Math.max(x.l, x.g)) : Ln);
-    const dim = sel >= 0 && sel !== i ? 0.3 : 1, sw = sel === i ? 32 : 26;
-    const circ = (dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${x.c}" stroke-width="${sw}" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}" data-a="sel" data-id="${i}"><title>${esc(x.n)}: ${money(x.g)}${x.l ? ` de ${money(x.l)}` : ''}</title></circle>`;
-    if (Ln - f > 0) segs += circ(Ln - f, off + f, 0.28 * dim);
-    if (f > 0) segs += circ(f, off, dim);
-    off += len;
-  });
-  const o = L[sel];
-  const big = o ? money(o.g) : money(G);
-  const small = o ? `${o.n}${o.l ? ` de ${money(o.l)}` : ''}` : M0 ? `${kind === 'income' ? 'recebido de' : 'gasto de'} ${money(M0)}` : 'total no mês';
-  const note = o && o.l ? (kind === 'income' ? (o.g >= o.l ? `meta atingida` : `faltam ${money(o.l - o.g)}`) : o.g > o.l ? `${money(o.g - o.l)} acima` : `restam ${money(o.l - o.g)}`) : '';
-  return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas do mês">
-      <circle cx="110" cy="110" r="${r}" fill="none" stroke="#2A2A2E" stroke-width="26"/>${segs}
-      <text x="110" y="${note ? 101 : 107}" text-anchor="middle" fill="#F5F5F5" font-size="${big.length > 11 ? 15 : 18}" font-weight="700">${esc(big)}</text>
-      <text x="110" y="${note ? 120 : 128}" text-anchor="middle" fill="#A5ACB8" font-size="11">${esc(small.length > 26 ? small.slice(0, 25) + '…' : small)}</text>
-      ${note ? `<text x="110" y="136" text-anchor="middle" fill="${kind === 'expense' && o.g > o.l ? 'var(--red)' : '#A5ACB8'}" font-size="11">${esc(note)}</text>` : ''}
-    </svg></div>
-    <div class="donut-legend">${L.map((x, i) => `<button class="${sel === i ? 'on' : ''}" data-a="sel" data-id="${i}"><i style="background:${x.c}"></i>${esc(x.n)}</button>`).join('')}</div>`;
+/** Engrenagem da divisão da renda: exibição, contas, modelo, doações e categorias. */
+function budgetConfigView() {
+  return {
+    title: 'Divisão da renda', right: { icon: 'plus', fn: () => push(budgetCatForm(null)) },
+    body: () => {
+      const cfg = budgetCfg(), model = B.activeModelOf(cfg), { esc } = C, pc = B.pctCheck(model);
+      const d = model.deduction || {};
+      const sw = (k, on) => `<input type="checkbox" class="switch" data-k="${k}" ${on ? 'checked' : ''}>`;
+      const accs = C.accountsList().filter(a => a.type !== 'piggy' && a.type !== 'treasury');
+      const cats = B.liveCats(model), arch = (model.cats || []).filter(c => c.archived);
+      const invest = cats.filter(c => c.kind === 'save' && ((c.piggyIds || []).includes(B.TREASURY) || /invest|liberdade/i.test(c.name))).reduce((s, c) => s + (+c.pct || 0), 0);
+      const links = c => [...(c.metaIds || []).map(id => (S().metas.get(id) || {}).name), ...(c.tagIds || []).map(id => (C.tag(id) || {}).name), ...(c.piggyIds || []).map(id => (id === B.TREASURY ? treasuryName() : (S().piggies.get(id) || {}).name))].filter(Boolean);
+      return `<div class="group">
+          <label class="row"><span class="grow">Mostrar a bolacha abaixo do calendário</span>${sw('showOnCalendar', cfg.showOnCalendar)}</label>
+          <label class="row"><span class="grow">Valores na legenda</span>${sw('showLegendValues', cfg.showLegendValues)}</label>
+          <label class="row"><span class="grow">Planejado x previsto nos detalhes</span>${sw('showPlanVsReal', cfg.showPlanVsReal)}</label>
+        </div>
+        <div class="group-title">Contas da renda</div>
+        <div class="chips">${accs.map(a => `<button type="button" class="chip${cfg.accounts.includes(a.id) ? ' on' : ''}" data-a="acc" data-id="${a.id}">${esc(a.name)}</button>`).join('')}</div>
+        <p class="hint">${cfg.accounts.length ? 'Com mais de uma conta, a renda é somada sem contar transferências entre elas; dá para ver uma conta por vez na própria bolacha.' : 'Nenhuma marcada: usa a conta que está sendo exibida.'}</p>
+        <div class="group-title">Modelo</div>
+        <div class="group">
+          <label class="row field"><span>Modelo em uso</span><select data-k="model">${cfg.models.map(m => `<option value="${m.id}" ${m.id === model.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
+          <label class="row field"><span>Nome</span><input type="text" data-k="modelName" value="${esc(model.name)}" maxlength="40"></label>
+        </div>
+        <div class="btn-row"><button class="primary-btn ghost sm" data-a="dup">Salvar como novo</button><button class="primary-btn ghost sm" data-a="tpl">Novo pelo modelo do Sardinha</button>${cfg.models.length > 1 ? '<button class="primary-btn ghost sm" data-a="delModel">Excluir modelo</button>' : ''}</div>
+        <div class="group-title">Doações e dízimo (antes da divisão)</div>
+        <div class="group">
+          <label class="row"><span class="grow">Descontar antes de dividir</span>${sw('dedOn', d.on)}</label>
+          ${d.on ? `<label class="row field"><span>Tipo</span><select data-k="dedMode"><option value="value" ${d.mode !== 'percent' ? 'selected' : ''}>Valor por mês</option><option value="percent" ${d.mode === 'percent' ? 'selected' : ''}>% da renda</option></select></label>
+          <label class="row field"><span>${d.mode === 'percent' ? 'Percentual (%)' : 'Valor por mês'}</span><input type="text" inputmode="decimal" data-k="dedValue" value="${d.mode === 'percent' ? pctTxt(+d.value || 0) : C.moneyInput(+d.value || 0)}"></label>` : ''}
+        </div>
+        <div class="group-title">Categorias <span class="${pc.ok ? 'pos' : pc.missing < 0 ? 'neg' : 'warn'}">${pctTxt(pc.sum)}%</span></div>
+        ${!pc.ok ? `<p class="hint ${pc.missing < 0 ? 'neg' : 'warn'}">${pc.missing > 0 ? `Faltam ${pctTxt(pc.missing)}% para fechar 100%.` : `Passou ${pctTxt(-pc.missing)}% de 100%.`} Ajuste os percentuais ou abra uma categoria e toque em "Ajustar as outras".</p>` : ''}
+        <div class="group">${cats.map(c => `<button class="row dist-cat" data-a="cat" data-id="${c.id}"><span class="dot" style="background:${c.color}"></span><span class="grow"><b>${esc(c.name)}</b><small>${c.kind === 'save' ? 'guardar/investir' : 'gastar'}${links(c).length ? ' · ' + esc(links(c).join(', ')) : ' · sem vínculos'}</small></span><b>${pctTxt(+c.pct || 0)}%</b></button>`).join('')}</div>
+        ${invest < B.GUIDE.investMin ? `<p class="hint">Orientação do método: destinar ${B.GUIDE.investIdeal}% a investimentos (pelo menos ${B.GUIDE.investMin}% em meses apertados). É só uma referência.</p>` : ''}
+        ${arch.length ? `<div class="group-title">Arquivadas</div><div class="group">${arch.map(c => `<button class="row dist-cat" data-a="cat" data-id="${c.id}"><span class="dot" style="background:${c.color}"></span><span class="grow muted">${esc(c.name)}</span><b class="muted">${pctTxt(+c.pct || 0)}%</b></button>`).join('')}</div>` : ''}
+        <p class="hint">Cada categoria usa as metas, tags, cofrinhos e o Tesouro que já existem. Um lançamento conta numa categoria só.</p>`;
+    },
+    onField: (el2, type) => {
+      if (type !== 'change') return;
+      const cfg = budgetCfg(), model = B.activeModelOf(cfg), k = el2.dataset.k;
+      const setModel = m => { cfg.models = cfg.models.map(x => (x.id === m.id ? m : x)); saveBudget(cfg); };
+      if (['showOnCalendar', 'showLegendValues', 'showPlanVsReal'].includes(k)) { cfg[k] = el2.checked; return saveBudget(cfg); }
+      if (k === 'model') { cfg.activeModel = el2.value; return saveBudget(cfg); }
+      if (k === 'modelName') return setModel({ ...model, name: el2.value.trim() || model.name });
+      if (k === 'dedOn') return setModel({ ...model, deduction: { ...(model.deduction || { mode: 'value', value: 0 }), on: el2.checked } });
+      if (k === 'dedMode') return setModel({ ...model, deduction: { ...model.deduction, mode: el2.value, value: 0 } });
+      if (k === 'dedValue') {
+        const v = model.deduction.mode === 'percent' ? parseFloat(String(el2.value).replace(',', '.')) : C.parseMoney(el2.value);
+        if (!Number.isFinite(v) || v < 0 || (model.deduction.mode === 'percent' && v > 100)) { C.toast('Valor inválido'); render(); return; }
+        return setModel({ ...model, deduction: { ...model.deduction, value: v } });
+      }
+    },
+    actions: {
+      cat: id => push(budgetCatForm(id)),
+      acc: id => { const cfg = budgetCfg(), set = new Set(cfg.accounts); set.has(id) ? set.delete(id) : set.add(id); cfg.accounts = [...set]; saveBudget(cfg); },
+      dup: () => { const cfg = budgetCfg(), m = B.activeModelOf(cfg); const copy = { ...structuredClone(m), id: C.uid(), name: `${m.name} (cópia)`, cats: m.cats.map(c => ({ ...structuredClone(c), id: C.uid() })) }; cfg.models = [...cfg.models, copy]; cfg.activeModel = copy.id; saveBudget(cfg); C.toast('Modelo salvo'); },
+      tpl: () => { const cfg = budgetCfg(), m = B.modelFromTemplate(B.TEMPLATE_SARDINHA, C.uid); cfg.models = [...cfg.models, m]; cfg.activeModel = m.id; saveBudget(cfg); C.toast('Modelo do Sardinha criado'); },
+      delModel: async () => { const cfg = budgetCfg(); if (cfg.models.length < 2) return; if (!(await C.confirmDlg('Excluir este modelo?', 'Os lançamentos, metas e cofrinhos não são afetados.', 'Excluir', 'danger'))) return; cfg.models = cfg.models.filter(m => m.id !== cfg.activeModel); cfg.activeModel = cfg.models[0].id; saveBudget(cfg); },
+    },
+  };
 }
+
+/** Categoria da divisão: nome, %, cor, tipo e vínculos com metas, tags, cofrinhos e Tesouro. */
+function budgetCatForm(catId) {
+  const cfg0 = budgetCfg(), model0 = B.activeModelOf(cfg0);
+  const c = catId ? model0.cats.find(x => x.id === catId) : null;
+  const value = c ? { ...c, metaIds: [...(c.metaIds || [])], tagIds: [...(c.tagIds || [])], piggyIds: [...(c.piggyIds || [])] }
+    : { name: '', pct: Math.max(0, B.pctCheck(model0).missing), color: C.PALETTE[(model0.cats.length * 5 + 2) % C.PALETTE.length], kind: 'spend', metaIds: [], tagIds: [], piggyIds: [], archived: false };
+  const saveCat = v => {
+    const cfg = budgetCfg(), model = B.activeModelOf(cfg);
+    const obj = { ...(c || { id: C.uid() }), ...v, pct: Math.max(0, +v.pct || 0) };
+    const cats = c ? model.cats.map(x => (x.id === c.id ? obj : x)) : [...model.cats, obj];
+    cfg.models = cfg.models.map(x => (x.id === model.id ? { ...model, cats } : x));
+    saveBudget(cfg);
+    return obj;
+  };
+  const view = formView({
+    title: c ? 'Categoria' : 'Nova categoria', value,
+    fields: [
+      { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Custos Fixos' },
+      { k: 'pct', label: 'Percentual da renda (%)', type: 'number', min: 0 },
+      { k: 'kind', label: 'Tipo', type: 'select', options: [['spend', 'Gastar (limite de despesas)'], ['save', 'Guardar ou investir']] },
+      { k: 'color', label: 'Cor', type: 'color' },
+      { section: 'Vínculos' },
+      { k: 'metaIds', label: 'Metas', type: 'multi', options: () => [...S().metas.values()].filter(m => !m.archived && (m.kind || 'expense') === 'expense').map(m => [m.id, m.name, m.color]) },
+      { k: 'tagIds', label: 'Tags', type: 'multi', options: tagOptions('expense') },
+      { k: 'piggyIds', label: 'Cofrinhos e Tesouro', type: 'multi', options: () => [...(treasury().accountId ? [[B.TREASURY, treasuryName(), '#45cf7f']] : []), ...[...S().piggies.values()].filter(p => !p.archived).map(p => [p.id, `Cofrinho ${p.name}`, p.color])] },
+      { hint: 'Gastos entram pelas metas e tags; dinheiro guardado entra pelos depósitos reais nos cofrinhos e aportes no Tesouro. Nada é contado duas vezes.' },
+      { section: '' },
+      { k: 'archived', label: 'Arquivar (some da bolacha, sem apagar)', type: 'switch', show: () => !!c },
+    ],
+    onSave: async v => { saveCat(v); C.toast(c ? 'Categoria atualizada' : 'Categoria criada'); },
+    onDelete: c && (async () => {
+      if (!(await C.confirmDlg('Excluir categoria?', 'Os lançamentos, metas e cofrinhos ligados não são afetados.', 'Excluir', 'danger'))) return false;
+      const cfg = budgetCfg(), model = B.activeModelOf(cfg);
+      cfg.models = cfg.models.map(x => (x.id === model.id ? { ...model, cats: model.cats.filter(q => q.id !== c.id) } : x));
+      saveBudget(cfg); back(); return false; // volta só para a lista de categorias
+    }),
+    extra: () => (c ? '<div class="btn-row"><button class="primary-btn ghost" data-a="rebal">Ajustar as outras para fechar 100%</button></div>' : ''),
+    extraActions: {
+      rebal: async () => {
+        const obj = saveCat(view.vals);
+        const cfg = budgetCfg(), model = B.activeModelOf(cfg);
+        cfg.models = cfg.models.map(x => (x.id === model.id ? B.rebalance(model, obj.id) : x));
+        saveBudget(cfg); C.toast('As outras categorias foram ajustadas proporcionalmente'); back();
+      },
+    },
+  });
+  return view;
+}
+
 function metaCard(m, p) {
   const { money, esc } = C;
   const inc = m.kind === 'income';
@@ -971,7 +1251,7 @@ function metaForm(m = null) {
       { section: 'O que entra na meta' },
       { k: 'tagIds', label: 'Tags desta meta (cada tag fica em uma meta só)', type: 'multi', options: () => tagOptions(null)() },
       { hint: 'Os lançamentos entram na meta pela tag ou quando são lançados direto na meta, sem tag.' },
-      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: marque só a Conta iFood para uma meta da bike', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
+      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: uma meta só para a conta de trabalho', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
       { k: 'originsTxt', label: 'Origens', placeholder: 'Ex.: iFood, Salário CLT', show: v => v.kind === 'income' },
       { section: 'Sobras e excedentes', show: v => daily(v) && v.kind !== 'income' },
       { k: 'rollover', label: 'Valor não usado', type: 'select', options: Object.entries(ROLLOVER), show: v => daily(v) && v.kind !== 'income' },
@@ -1109,14 +1389,15 @@ function alertsView() {
   };
 }
 
-const VIEWS = { closing: closingView, accounts: accountsView, piggies: piggiesView, metas: metasView, reports: reportsView, history: historyView, alerts: alertsView };
+const VIEWS = { closing: closingView, accounts: accountsView, piggies: piggiesView, treasury: treasuryView, budget: budgetConfigView, metas: metasView, reports: reportsView, history: historyView, alerts: alertsView };
 
 // ------------------------------------------------------------------ PAINÉIS DA TELA INICIAL
-const openPanels = new Set();
+const openPanels = new Set(['metas']);
+const panelDist = { sel: null, only: null }; // seleção da bolacha embaixo do calendário
 export function renderPanels(box) {
   if (!C) return;
   const on = S().settings.panels || {};
-  const keys = ['accounts', 'metas', 'pending', 'upcoming', 'piggies'].filter(k => on[k]);
+  const keys = ['accounts', 'metas', 'pending', 'upcoming', 'piggies'].filter(k => on[k] || (k === 'metas' && on[k] === undefined)); // metas: ligado por padrão
   if (!keys.length) { box.innerHTML = ''; return; }
   const b = S().bal || bal();
   const { money, signed, sgnCls, esc, dm } = C;
@@ -1128,11 +1409,38 @@ export function renderPanels(box) {
         body: list.map(a => row({ a: 'page', id: 'accounts', dot: a.color, t: esc(a.name), v: signed((b.accounts.get(a.id) || {}).real || 0) })).join('') + `<span class="kv"><span>Disponível</span><span>${money(b.totals.available)}</span></span>` };
     },
     metas: () => {
-      const ms = [...S().metas.values()].filter(C.metaVisible);
-      const ps = ms.map(m => [m, C.F.metaProgress(C.scopedMeta(m), t, C.budgetCtx())]);
-      const over = ps.filter(([m, p]) => m.kind !== 'income' && p.over > 0).length;
-      return { label: 'Metas', value: ms.length ? (over ? `${over} acima do limite` : 'Dentro do limite') : 'Nenhuma', cls: over ? 'neg' : '',
-        body: ps.map(([m, p]) => metaCard(m, p).replace('data-a="open"', 'data-a="meta"')).join('') };
+      // acompanha a visualização do calendário: dia, semana, mês (e agenda) ou ano
+      const view = C.calView ? C.calView() : 'month';
+      const v = view === 'agenda' ? 'month' : view;
+      const sel = S().selected || t, sv = S().view || parse(t);
+      const inView = (sv.y === parse(t).y && sv.m === parse(t).m) ? t : iso(sv.y, sv.m, 1);
+      const date = v === 'day' || v === 'week' ? sel : v === 'year' ? (sv.y === parse(t).y ? t : iso(sv.y, 1, 1)) : inView;
+      const ms = [...S().metas.values()].filter(C.metaVisible).map(C.scopedMeta);
+      const P = C.F.metaPanel({ metas: ms, view: v, date, data: S().data, isHoliday: S().isHoliday, mondayFirst: S().settings.mondayFirst });
+      const rows = P.groups.flatMap(g => g.rows);
+      const over = rows.filter(r => r.status === 'over').length;
+      const fmtRow = r => {
+        const inc = (r.meta.kind || 'expense') === 'income';
+        const pct = r.limit ? Math.min(1, r.real / r.limit) : 0, pctP = r.limit ? Math.min(1, r.planned / r.limit) : 0;
+        const head = inc ? (r.status === 'met' ? `<b class="pos">${r.over ? `+${money(r.over)} além` : 'meta atingida'}</b>` : `<b>faltam ${money(r.remaining)}</b>`)
+          : r.status === 'over' ? `<b class="neg">excedeu ${money(r.over)}</b>`
+          : r.status === 'risk' ? `<b class="warn">previsto passa ${money(r.planned - r.limit)}</b>` : `<b>restam ${money(r.remaining)}</b>`;
+        const sub = inc ? `Recebido ${money(r.real)} de ${money(r.limit)} · previsto ${money(r.planned)}` : `Gasto ${money(r.real)} de ${money(r.limit)} · previsto ${money(r.planned)}`;
+        const parts = r.parts ? `<div class="mp-parts">${r.parts.map(x => `<span class="mp-part ${x.status}" title="${esc(`${x.label}: ${money(x.real)} de ${money(x.limit)} (previsto ${money(x.planned)})`)}"><small>${esc(x.label)}</small><i style="--p:${x.limit ? Math.min(100, Math.round(x.real / x.limit * 100)) : 0}%"></i></span>`).join('')}</div>` : '';
+        return `<button class="mp-row" data-a="meta" data-id="${r.meta.id}">
+          <span class="line"><span class="dot" style="background:${r.meta.color || 'var(--accent)'}"></span><span class="grow t">${esc(r.meta.name)} <small>${esc(r.label)}</small></span>${head}</span>
+          <span class="mp-bar${r.status === 'over' ? ' over' : ''}"><i class="p" style="width:${(pctP * 100).toFixed(1)}%;background:${r.meta.color || 'var(--accent)'}"></i><i style="width:${(pct * 100).toFixed(1)}%;background:${r.meta.color || 'var(--accent)'}"></i></span>
+          <span class="s">${sub}${r.overDays ? ` · ${r.overDays} dia(s) acima` : ''}</span>${parts}
+        </button>`;
+      };
+      // bolacha da divisão da renda no mesmo período (pode ser desligada na engrenagem)
+      const { cfg: bcfg, d: dist } = budgetDist(P.from, P.to, panelDist.only);
+      const pie = bcfg.showOnCalendar ? `<div class="donut-card mp-dist"><div class="donut-head"><b>Divisão da renda · ${esc(P.title)}</b><button class="icon-btn sm" data-a="pcfg" aria-label="Configurar a divisão da renda">${C.icon('gear')}</button></div>${rendaBolacha(bcfg, dist, panelDist.sel, panelDist.only, 'p')}</div>` : '';
+      const body = pie + P.groups.map(g => `<div class="mp-group">${esc(g.title)}</div>${g.rows.map(fmtRow).join('')}`).join('')
+        || `<p class="hint">Nenhuma meta ${v === 'day' ? 'diária para este dia' : v === 'week' ? 'diária ou semanal para esta semana' : v === 'year' ? 'para este ano' : 'para este mês'} nesta conta.</p>`;
+      const risk = rows.filter(r => r.status === 'risk').length;
+      return { label: `Metas · ${P.title}`, value: rows.length ? (over ? `${over} acima do limite` : risk ? `${risk} com previsto acima` : 'Dentro do limite') : 'Nenhuma', cls: over ? 'neg' : risk ? 'warn' : '',
+        body: body + '<p class="hint mp-hint">Barra clara = previsto · barra forte = realizado. Cada lançamento conta uma vez, mesmo aparecendo no dia, na semana e no mês.</p>' };
     },
     pending: () => {
       const items = [...(S().alerts || [])].filter(a => a.items).flatMap(a => a.items);
@@ -1167,6 +1475,9 @@ export function renderPanels(box) {
       if (a.dataset.a === 'page') open(a.dataset.id);
       if (a.dataset.a === 'meta') { open('metas'); push(metaDetail(a.dataset.id)); }
       if (a.dataset.a === 'goDay') C.openDay(a.dataset.id);
+      if (a.dataset.a === 'psel') { const id = a.dataset.id; panelDist.sel = String(panelDist.sel) === String(id) ? null : id; renderPanels(box); }
+      if (a.dataset.a === 'pacc') { panelDist.only = a.dataset.id || null; panelDist.sel = null; renderPanels(box); }
+      if (a.dataset.a === 'pcfg') { open('budget'); }
     });
   }
 }

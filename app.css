@@ -1190,3 +1190,79 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
 .sim-months b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .sim-foot { list-style: none; padding: 0; margin: 16px 2px 8px; font-size: 11.5px; line-height: 1.6; color: var(--text-3, #7a7a7a); }
 @media (min-width: 1100px) { .sim-main b { font-size: 40px; } }
+
+/* =================== v2.2 — renda se parar de contribuir + metas acompanhando a visualização =================== */
+.sim-stop { background: rgba(69, 207, 127, .08); border: 1px solid rgba(69, 207, 127, .22); border-radius: 14px; padding: 12px 14px; margin: 0 0 12px; }
+.sim-stop small { display: block; font-size: 12.5px; color: var(--text-2); }
+.sim-stop b { display: block; font-size: 26px; font-weight: 800; color: #FFFFFF; margin: 4px 0 2px; font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+.sim-stop b em { font-style: normal; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.sim-stop span { display: block; font-size: 13px; color: var(--green); font-variant-numeric: tabular-nums; }
+.sim-stop span.nom { color: var(--text-2); font-size: 11.5px; margin-top: 4px; }
+.sim-facts b.pos { color: var(--green); }
+.sim-row { grid-template-columns: 74px repeat(5, minmax(0, 1fr)); }
+.sim-row .v.stop { color: var(--green); font-weight: 600; }
+@media (max-width: 700px) {
+  .sim-row { grid-template-columns: 74px repeat(2, minmax(0, 1fr)); row-gap: 8px; }
+  .sim-row .h { grid-row: span 3; }
+}
+.sim-srcs .row b { display: block; font-weight: 600; }
+.sim-srcs .row small { display: block; font-size: 12px; color: var(--text-2); margin-top: 2px; }
+/* metas abaixo do calendário */
+.mp-group { font-size: 11px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; color: var(--text-2); margin: 12px 4px 6px; }
+.mp-row { display: block; width: 100%; text-align: left; background: var(--s2); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; }
+.mp-row .line { display: flex; align-items: center; gap: 8px; }
+.mp-row .t { font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-row .t small { font-weight: 500; color: var(--text-2); font-size: 11.5px; }
+.mp-row .line b { font-size: 12.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mp-row .line b.neg { color: var(--red); } .mp-row .line b.pos { color: var(--green); }
+.mp-row .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mp-bar { position: relative; display: block; height: 5px; border-radius: 3px; background: #2A2A2E; margin: 8px 0 6px; overflow: hidden; }
+.mp-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; }
+.mp-bar i.p { opacity: .3; }
+.mp-bar.over { box-shadow: inset 0 0 0 1px rgba(255, 95, 87, .6); }
+.mp-row .s { display: block; font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.mp-parts { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.mp-part { flex: 1 1 0; min-width: 30px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.mp-part small { font-size: 10px; color: var(--text-2); }
+.mp-part i { display: block; width: 100%; height: 5px; border-radius: 3px; background: linear-gradient(90deg, var(--green) var(--p), #2A2A2E var(--p)); }
+.mp-part.over i { background: linear-gradient(90deg, var(--red) 100%, #2A2A2E 100%); }
+.mp-part.none i { background: #2A2A2E; }
+.mp-hint { font-size: 11px; margin: 6px 4px 4px; }
+.mp-row .line b.warn { color: var(--orange); }
+
+/* =================== v2.3 — Tesouro em aba própria + divisão da renda (bolacha de 100%) =================== */
+.sim-card { position: relative; }
+.sim-gear { position: absolute; top: 8px; right: 8px; color: var(--text-2); }
+.sim-gear + .sim-have { padding-right: 40px; }
+.sim-card > .segmented.sim-years:first-of-type { margin-top: 0; }
+.sim-main.small b { font-size: 24px; }
+.sim-main b.plain { color: #FFFFFF; font-size: 22px; }
+.sim-card > .primary-btn { display: block; width: 100%; margin-top: 8px; }
+.sim-stop.big b { font-size: 34px; color: var(--green); }
+.icon-btn.sm { width: 32px; height: 32px; }
+.icon-btn.sm svg { width: 18px; height: 18px; }
+.tr-item { gap: 6px; }
+.tr-item .icon-btn:nth-of-type(1) svg { transform: rotate(90deg); }
+.tr-item .icon-btn:nth-of-type(2) svg { transform: rotate(90deg); }
+.tr-item .icon-btn[disabled] { opacity: .25; }
+.warn { color: var(--orange); } .hint.warn { color: var(--orange); } .hint.neg { color: var(--red); }
+.donut-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dist-model { margin: 2px 0 0; }
+.dist-accs { margin: 8px 0 0; justify-content: center; }
+.dist-legend button { display: inline-flex; align-items: center; gap: 5px; }
+.dist-legend button b { font-weight: 700; color: var(--text); }
+.dist-legend button small { color: var(--text-2); font-size: 11px; }
+.dist-legend button small.neg { color: var(--red); }
+.dist-detail { margin-top: 10px; background: var(--s2); border-radius: 12px; padding: 6px 12px 8px; }
+.dist-detail .kv { font-size: 13.5px; }
+.dist-detail .card-row { background: transparent; padding-left: 0; padding-right: 0; }
+.dist-cat { align-items: center; gap: 10px; text-align: left; width: 100%; }
+.dist-cat .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dist-cat b { font-weight: 600; }
+.dist-cat small { display: block; font-size: 12px; color: var(--text-2); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dist-cat .grow { min-width: 0; }
+.group-title .pos { color: var(--green); } .group-title .neg { color: var(--red); } .group-title .warn { color: var(--orange); }
+.mp-dist { margin: 4px 0 8px; }
+.hint.center { text-align: center; }
+.btn-row .primary-btn.sm { flex: 1 1 auto; height: 38px; }
+.btn-row { flex-wrap: wrap; }

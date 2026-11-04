@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.1.1';
+export const APP_VERSION = '2.3.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -61,7 +61,7 @@ const tag = id => (id ? S.tags.get(id) : null);
 const accountsList = (all = false) => [...S.accounts.values()].filter(a => all || !a.archived).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 const accName = id => (S.accounts.get(id) || {}).name || 'Conta';
 /** Contas que viram "mundos" no menu: o cofrinho real (conta separada) não vira uma aba própria. */
-const worldAccounts = () => accountsList().filter(a => a.type !== 'piggy');
+const worldAccounts = () => accountsList().filter(a => a.type !== 'piggy' && a.type !== 'treasury');
 const multiAcc = () => worldAccounts().length > 1;
 /**
  * Conta exibida (o "mundo"): uma conta por vez, escolhida no topo do menu (Conta 1 | Conta 2).
@@ -315,6 +315,8 @@ function setDock(open) {
   if (open && S.calc) renderDay(S.selected || today());
 }
 wideMQ.addEventListener('change', applyLayout);
+// PC: ao rolar até as metas embaixo do calendário, o painel do dia acompanha
+window.addEventListener('scroll', () => { if (isWide()) placeDock(); }, { passive: true });
 
 // ---------- Altura das células: compacta x expandida (só visualização) ----------
 const CAL = { rows: 6, compact: 64, expanded: 140, lines: 0 };
@@ -577,6 +579,7 @@ function renderSummary() {
   $('#summaryLabel').textContent = 'Vai sobrar';
   $('#summaryValue').textContent = signed(end);
   $('#summaryValue').className = sgnCls(end);
+  pages.renderPanels($('#panels')); // as metas abaixo do calendário acompanham a visualização
 }
 /** Próximo recebimento previsto (ainda não recebido) depois de hoje, nas contas exibidas. */
 function nextIncome(td) {
@@ -769,6 +772,8 @@ function refreshDerived() {
     // no menu, o saldo da conta exibida (com uma conta só, o total)
     const act = activeAccount(), ab = act && S.bal.accounts.get(act);
     $('#navBalance').textContent = !S.accounts.size ? '' : multiAcc() && ab ? signed(ab.real) : signed(S.bal.totals.total);
+    const trA = S.settings.treasury && S.bal.accounts.get(S.settings.treasury.accountId), nt = $('#navTreasury');
+    if (nt) nt.textContent = trA ? money(trA.real) : '';
     pages.renderPanels($('#panels'));
   }, 30);
 }
@@ -1762,7 +1767,7 @@ function syncDrawer() {
   $('#holState').value = s.holState;
   $('#holCity').value = s.holCity;
   const P = { accounts: 'Contas', metas: 'Metas', pending: 'Pendências', upcoming: 'Próximos 7 dias', piggies: 'Cofrinhos' };
-  $('#panelCfg').innerHTML = Object.entries(P).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-panel="${k}" ${s.panels[k] ? 'checked' : ''}></label>`).join('');
+  $('#panelCfg').innerHTML = Object.entries(P).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-panel="${k}" ${s.panels[k] || (k === 'metas' && s.panels[k] === undefined) ? 'checked' : ''}></label>`).join('');
   $('#alertCfg').innerHTML = Object.entries(F.ALERT_TYPES).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-alert="${k}" ${s.alerts[k] === false ? '' : 'checked'}></label>`).join('');
   $('#btnInstall').hidden = !installPrompt;
   // todos os feriados (nacionais, estaduais, municipais e próprios), cada um com liga/desliga
@@ -2184,7 +2189,7 @@ function ctx() {
     dialog, confirmDlg, closeTop, closeAll, openLayer, isOpen, toast, refresh, rebuild, saveSettings, commit, undoLast,
     ops, F, db, tag, tagColor, tagsSorted, accountsList, accName, itemTitle, itemColor, itemSign, amtCls, statusLabel,
     budgetCtx, openForm, openDay: d => { S.view = parse(d); renderHeader(); renderGrid(); openDay(d); }, renderHeader, renderGrid,
-    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, accVisible, filtering,
+    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, accVisible, filtering, calView,
   };
 }
 
