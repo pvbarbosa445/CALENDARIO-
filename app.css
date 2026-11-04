@@ -888,3 +888,31 @@ html, body { overscroll-behavior: none; overscroll-behavior-y: none; }
 @media (min-width: 1100px) { .view-btn { display: none; } }
 /* v1.9.7 — sem gesto de arrastar para expandir: o botão do topo liga/desliga os lançamentos nos dias */
 #calHandle { display: none !important; }
+
+/* =================== v1.9.8 — resumo do dinheiro embaixo do calendário (como no app antigo) =================== */
+.money { display: block; width: 100%; margin-top: 10px; padding: 10px 14px 4px; border-top: 1px solid var(--line); text-align: left; }
+.money small { display: block; font-size: 12px; color: var(--text-2); line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.money b { display: block; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.money .mb-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.money .mb-bal b { font-size: 24px; color: #FFFFFF; letter-spacing: -.3px; }
+.money .mb-bal b.neg { color: var(--red); }
+.money .mb-next { text-align: right; min-width: 0; }
+.money .mb-next b { font-size: 17px; }
+.money .mb-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; padding-right: 70px; }
+.money .mb-row b { font-size: 14px; margin-top: 1px; }
+@media (min-width: 1100px) {
+  .money { padding: 12px 6px 4px; }
+  .money .mb-row { padding-right: 0; }
+  .money .mb-bal b { font-size: 26px; }
+}
+/* sem zoom (pinça/toque duplo): o app fica fixo como um app instalado */
+html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* o botão + fica à direita: o resumo reserva esse espaço nas duas linhas */
+@media (max-width: 1099px) {
+  .money { padding-right: 78px; }
+  .money .mb-row { padding-right: 0; }
+  .money .mb-top { flex-wrap: wrap; row-gap: 2px; }
+  .money .mb-next { text-align: left; flex-basis: 100%; }
+  .money .mb-next small, .money .mb-next b { display: inline; }
+  .money .mb-next b { margin-left: 6px; font-size: 15px; }
+}

@@ -1,6 +1,6 @@
 // Calendário Financeiro — interface (Etapa 2)
 import * as db from './db.js';
-import { createCalculator, RULES, attrsAt, occKey } from './engine.js';
+import { createCalculator, RULES, attrsAt, occKey, itemsInRange, flowOf } from './engine.js';
 import { makeHolidayLookup, LOCALES, holidayNames } from './holidays.js';
 import * as ops from './ops.js';
 import * as F from './finance.js';
@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.7';
+export const APP_VERSION = '1.9.8';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -325,7 +325,7 @@ function measureCal() {
   const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
   const reserve = isWide()
     ? Math.max(44, $('#summary').getBoundingClientRect().height) + (parseFloat(getComputedStyle($('main')).paddingBottom) || 0) + 6
-    : 92;
+    : Math.max(92, ($('#summary').getBoundingClientRect().height || 0) + 26);
   const fill = Math.floor((vh - top - reserve - gap * (CAL.rows - 1)) / CAL.rows);
   CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
   // PC: dias com altura máxima confortável (e o mês inteiro cabendo na tela); celular: expandido preenche a tela
@@ -522,25 +522,61 @@ function dayLines(day, max) {
   return `<span class="lns">${show.map(line).join('')}${rest ? `<span class="ln more">+${rest}</span>` : ''}</span>`;
 }
 
+/**
+ * Resumo embaixo do calendário (como no app antigo):
+ *  - Saldo na conta: o dinheiro de verdade hoje (só o que já foi pago/recebido), da conta exibida;
+ *  - Até a próxima receita: quanto sobra (ou falta) até o próximo recebimento, pagando o previsto de cada dia,
+ *    inclusive os gastos do dia em que ele cai;
+ *  - Receitas e gastos previstos do mês exibido, e quanto vai sobrar no fim desse mês.
+ */
 function renderSummary() {
-  const mo = S.month, t = mo.totals, last = mo.days[mo.days.length - 1], s = S.settings;
-  const real = s.basis === 'realized';
-  const base = real ? 'realizado' : 'previsto';
-  let label = 'Resumo do mês', val = null;
-  if (s.showIncome && s.showExpense) { label = `Saldo ${base} no fim do mês`; val = real ? last.cumNetReal : last.cumNet; }
-  else if (s.showExpense) { label = `Despesas ${real ? 'pagas' : 'previstas'} no mês`; val = -(real ? t.expPaid : t.exp); }
-  else if (s.showIncome) { label = `Receitas ${real ? 'recebidas' : 'previstas'} no mês`; val = real ? t.incPaid : t.inc; }
-  $('#summaryLabel').textContent = label;
-  $('#summaryValue').textContent = val === null ? '' : signed(val);
-  $('#summaryValue').className = val === null ? '' : sgnCls(val);
-  const kv = (k, v, c = '') => `<span class="kv"><span>${k}</span><span class="${c}">${v}</span></span>`;
-  $('#summaryBody').innerHTML = `<span>
-    ${s.carry ? kv('Saldo inicial', signed(mo.opening.planned), sgnCls(mo.opening.planned)) : ''}
-    ${kv('Receitas', `${money(t.incPaid)} de ${money(t.inc)}`, 'pos')}
-    ${kv('Despesas', `${money(t.expPaid)} de ${money(t.exp)}`, 'neg')}
-    ${kv('Resultado do mês', signed(t.inc - t.exp), sgnCls(t.inc - t.exp))}
-  </span>`;
-  $('#summary').setAttribute('aria-expanded', String(!!s.summaryOpen));
+  const mo = S.month, t = mo.totals, last = mo.days[mo.days.length - 1], td = today();
+  // saldo na conta (realizado), contas visíveis
+  const bal = F.balances({ data: S.data, accounts: accountsList(true), today: td, planUpto: td });
+  const now = [...S.set].reduce((a, id) => a + ((bal.accounts.get(id) || {}).real || 0), 0);
+  $('#mbBal').textContent = signed(now).replace(/^\+/, '');
+  $('#mbBal').className = now < 0 ? 'neg' : '';
+  // próxima receita depois de hoje (até 3 meses)
+  const nx = nextIncome(td);
+  if (nx) {
+    const left = untilNextIncome(td, nx.date, now);
+    $('#mbNextLabel').textContent = `${left < 0 ? 'Faltam' : 'Sobra'} até ${nx.title} · ${dm(nx.date)}`;
+    $('#mbNext').textContent = money(Math.abs(left));
+    $('#mbNext').className = left < 0 ? 'neg' : 'pos';
+  } else {
+    $('#mbNextLabel').textContent = 'Até a próxima receita';
+    $('#mbNext').textContent = '—'; $('#mbNext').className = '';
+  }
+  $('#mbInc').textContent = money(t.inc);
+  $('#mbExp').textContent = money(t.exp);
+  const end = last.cumNet;
+  $('#summaryLabel').textContent = 'Vai sobrar';
+  $('#summaryValue').textContent = signed(end);
+  $('#summaryValue').className = sgnCls(end);
+}
+/** Próximo recebimento previsto (ainda não recebido) depois de hoje, nas contas exibidas. */
+function nextIncome(td) {
+  const to = addDays(td, 100);
+  const byDate = itemsInRange(addDays(td, 1), to, S.data);
+  for (const d of [...byDate.keys()].sort()) {
+    if (d <= td) continue;
+    const it = byDate.get(d).find(i => i.kind === 'income' && countsPlanned(i) && i.status !== 'paid' && accVisible(i));
+    if (it) return { date: d, title: itemTitle(it) };
+  }
+  return null;
+}
+/** Dinheiro de hoje + o que ainda vai entrar/sair de hoje até a véspera da receita − os gastos do dia dela. */
+function untilNextIncome(td, H, now) {
+  let v = now;
+  for (const [d, list] of itemsInRange(td, H, S.data)) {
+    for (const it of list) {
+      if (it.status === 'moved' || !countsPlanned(it)) continue;
+      const f = flowOf(it, S.set); if (!f) continue;
+      if (d < H) v += (f.inc - f.incR) - (f.exp - f.expR) + (f.tr - f.trR);
+      else v -= (f.exp - f.expR); // no dia da receita, só os gastos
+    }
+  }
+  return v;
 }
 
 function goMonth(delta) {
@@ -1669,7 +1705,7 @@ function bind() {
   $$('[data-close]').forEach(b => { b.onclick = () => closeTop(); });
   $('#btnNewTop').onclick = () => openForm({ date: S.selected || today() });
   $('#fab').onclick = () => openForm({ date: today() });
-  $('#summary').onclick = () => { S.settings.summaryOpen = !S.settings.summaryOpen; saveSettings(); renderSummary(); };
+  // (resumo do dinheiro sempre aberto — v1.9.8)
 
   // Grade: toque abre o dia; deslizar troca o mês; toque longo inicia a seleção; arrastar seleciona vários
   const wrap = $('#gridWrap');
@@ -1995,6 +2031,9 @@ let installPrompt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; });
 
 async function init() {
+  // app de verdade: sem zoom de pinça nem de toque duplo (o viewport já pede isso; aqui garantimos nos navegadores que ignoram)
+  ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('touchmove', e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
   hydrateIcons();
   fillStaticSelects();
   const t = parse(today());

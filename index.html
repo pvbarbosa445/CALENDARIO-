@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <meta name="color-scheme" content="dark">
   <meta name="mobile-web-app-capable" content="yes">
@@ -36,10 +36,18 @@
     <div class="weekdays" id="weekdays"></div>
     <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
     <div class="cal-handle" id="calHandle" role="button" tabindex="0" aria-label="Expandir ou recolher o calendário"><i></i></div>
-    <button class="summary" id="summary" aria-expanded="false">
-      <span class="summary-line"><span id="summaryLabel"></span><b id="summaryValue"></b></span>
-      <span class="summary-body" id="summaryBody"></span>
-    </button>
+    <!-- resumo do dinheiro (como no app antigo): saldo na conta, sobra até a próxima receita e o mês -->
+    <section class="money" id="summary" aria-label="Resumo do dinheiro">
+      <div class="mb-top">
+        <div class="mb-bal"><small>Saldo na conta</small><b id="mbBal"></b></div>
+        <div class="mb-next"><small id="mbNextLabel">Até a próxima receita</small><b id="mbNext"></b></div>
+      </div>
+      <div class="mb-row">
+        <div><small>Receitas do mês</small><b class="pos" id="mbInc"></b></div>
+        <div><small>Gastos do mês</small><b class="neg" id="mbExp"></b></div>
+        <div><small id="summaryLabel">Vai sobrar</small><b id="summaryValue"></b></div>
+      </div>
+    </section>
     <div id="panels"></div>
   </main>
 
