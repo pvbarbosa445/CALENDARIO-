@@ -417,7 +417,7 @@ export function metaPanel({ metas, view, date, data, isHoliday, mondayFirst = fa
     }));
   }
   const pigs = new Map(piggies.map(p => [p.id, p]));
-  push('Metas de acumulação', metas.filter(x => !x.archived && x.kind === 'saving' && x.amount && !x.completedAt).map(x => savingRow(x, { piggy: pigs.get(x.piggyId), data, today, view, date, from: R.from, to: R.to, mondayFirst })));
+  push('Metas de acumulação', metas.filter(x => !x.archived && x.kind === 'saving' && (x.amount || x.basis === 'percent') && !x.completedAt).map(x => savingRow(x, { piggy: pigs.get(x.piggyId), data, today, view, date, from: R.from, to: R.to, mondayFirst })));
   push('Períodos personalizados', by('custom').filter(x => x.from && x.to && x.to >= R.from && x.from <= R.to).map(x => row(x, x.from, x.to, `${shortDM(x.from)} a ${shortDM(x.to)}`)));
   return { ...R, groups };
 }
@@ -479,8 +479,15 @@ export function savingPlan(meta, { piggy, data, today }) {
   // o que foi guardado no período atual conta para a contribuição deste período (não reduz a parcela duas vezes)
   const w = savingWindow(meta, today);
   const before = Math.max(0, all.filter(x => x.date < w.from).reduce((s, x) => s + x.amount, 0));
-  const perPeriod = left ? Math.ceil(Math.max(0, goal - before) / periods) : 0;
-  return { goal, saved, left, periods, perPeriod, done: goal > 0 && saved >= goal, pct: goal ? Math.min(1, saved / goal) : 0, moves: all };
+  let perPeriod = left ? Math.ceil(Math.max(0, goal - before) / periods) : 0;
+  let periodsOut = periods;
+  if (meta.basis === 'percent' && meta.monthlyContribution != null) {
+    // definida por % da receita: a parcela vem da receita; o prazo vira estimativa de quando o valor é atingido
+    const mc = meta.monthlyContribution, f = meta.freq || 'month';
+    perPeriod = Math.round(f === 'month' ? mc : f === 'week' ? mc * 12 / 52 : f === 'biweek' ? mc * 12 / 26 : mc * 12 / 365 * Math.max(1, +meta.freqDays || 1));
+    periodsOut = perPeriod && left ? Math.ceil(left / perPeriod) : 0;
+  }
+  return { goal, saved, left, periods: periodsOut, perPeriod, done: goal > 0 && saved >= goal, pct: goal ? Math.min(1, saved / goal) : 0, moves: all };
 }
 const FREQ_UNIT = { week: 'semana', biweek: 'quinzena', month: 'mês', days: 'período' };
 export const freqUnit = meta => (meta.freq === 'days' && +meta.freqDays === 1 ? 'dia' : FREQ_UNIT[meta.freq || 'week']);

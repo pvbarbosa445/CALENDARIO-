@@ -6,10 +6,11 @@ import * as ops from './ops.js';
 import * as F from './finance.js';
 import * as pages from './pages.js';
 import * as onboarding from './onboarding.js';
+import * as B from './budget.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.4.2';
+export const APP_VERSION = '2.5.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -113,7 +114,17 @@ function metaVisible(m) {
   return !ids.length || ids.some(id => S.set.has(id));
 }
 /** Meta "para todas as contas" passa a contar só as contas visíveis quando há filtro. */
-function scopedMeta(m) {
+/** Meta definida por % da receita → valor em reais sobre a receita do mês exibido (na conta exibida). */
+let incomeCache = new Map();
+function resolveMeta(m) {
+  if (!m || m.basis !== 'percent') return m;
+  const v = S.view || parse(today()), ids = [...(S.set || [])];
+  const key = `${v.y}-${v.m}|${ids.join(',')}`;
+  if (!incomeCache.has(key)) incomeCache.set(key, B.monthlyIncome({ data: S.data, metas: [...S.metas.values()].filter(x => x.basis !== 'percent'), ids, y: v.y, m: v.m, isHoliday: S.isHoliday }));
+  return B.resolvePercent(m, incomeCache.get(key));
+}
+function scopedMeta(m0) {
+  const m = resolveMeta(m0);
   const ids = m.accountIds || [];
   if (!filtering()) return m;
   return { ...m, accountIds: ids.length ? ids.filter(id => S.set.has(id)) : [...S.set] };
@@ -164,6 +175,7 @@ function rebuild() {
   S.isHoliday = makeHolidayLookup({ state: s.holState, city: s.holCity, optional: s.holOptional, custom: s.customHolidays, disabled: s.disabledHolidays });
   S.data = { entries: [...S.entries.values()], overrides: S.overrides, isHoliday: S.isHoliday, defaultAccount: s.defaultAccount };
   S.set = visibleAccounts();
+  incomeCache = new Map(); // a receita muda → metas por % recalculam
   const initial = [...S.set].reduce((t, id) => t + ((S.accounts.get(id) || {}).initialBalance || 0), 0);
   S.calc = createCalculator(S.data, { carry: s.carry, initialBalance: initial, startDate: s.startDate || iso(S.view.y, S.view.m, 1), accounts: S.set });
 }
@@ -2222,7 +2234,7 @@ function ctx() {
     dialog, confirmDlg, closeTop, closeAll, openLayer, isOpen, toast, refresh, rebuild, saveSettings, commit, undoLast,
     ops, F, db, tag, tagColor, tagsSorted, accountsList, accName, itemTitle, itemColor, itemSign, amtCls, statusLabel,
     budgetCtx, openForm, openDay: d => { S.view = parse(d); renderHeader(); renderGrid(); openDay(d); }, renderHeader, renderGrid,
-    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, accVisible, filtering, calView,
+    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, resolveMeta, accVisible, filtering, calView,
   };
 }
 
