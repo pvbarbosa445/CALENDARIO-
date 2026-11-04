@@ -37,20 +37,57 @@ export function modelFromTemplate(tpl = TEMPLATE_SARDINHA, uid = uidLocal) {
   };
 }
 
-/** Configuração com padrões: um modelo inicial, conta exibida como origem, bolacha visível no calendário. */
-export function budgetConfig(settings = {}, uid = uidLocal) {
+/**
+ * Configuração visual da bolacha. O modelo de distribuição não é cadastrado aqui:
+ * as categorias vêm diretamente das Metas existentes. `models` é mantido apenas
+ * para ler versões antigas e migrar seus percentuais/vínculos sem perder dados.
+ */
+export function budgetConfig(settings = {}) {
   const b = settings.budget || {};
-  const models = Array.isArray(b.models) && b.models.length ? b.models : [modelFromTemplate(TEMPLATE_SARDINHA, uid)];
-  const active = models.find(m => m.id === b.activeModel) || models[0];
+  const models = Array.isArray(b.models) ? b.models : [];
+  const legacy = models.find(m => m.id === b.activeModel) || models[0] || null;
   return {
-    models, activeModel: active.id,
     accounts: Array.isArray(b.accounts) ? b.accounts : [], // vazio = a conta que está sendo exibida
     showOnCalendar: b.showOnCalendar !== false,
     showLegendValues: b.showLegendValues !== false,
     showPlanVsReal: b.showPlanVsReal !== false,
+    deduction: b.deduction || (legacy && legacy.deduction) || { on: false, mode: 'value', value: 0 },
+    legacyModel: legacy,
   };
 }
-export const activeModelOf = cfg => cfg.models.find(m => m.id === cfg.activeModel) || cfg.models[0];
+
+/** Recupera o percentual de modelos antigos apenas como migração de leitura. */
+export function metaDistributionPct(meta, legacyModel = null, allMetas = []) {
+  if (meta && meta.allocationPct != null && Number.isFinite(+meta.allocationPct)) return Math.max(0, Math.min(100, +meta.allocationPct));
+  const cats = (legacyModel && legacyModel.cats || []).filter(c => !c.archived);
+  let total = 0;
+  for (const c of cats) {
+    const mids = c.metaIds || [];
+    if (mids.includes(meta.id)) { total += (+c.pct || 0) / Math.max(1, mids.length); continue; }
+    if (meta.kind === 'saving' && meta.piggyId && (c.piggyIds || []).includes(meta.piggyId)) { total += (+c.pct || 0); continue; }
+    const matched = (c.tagIds || []).filter(id => (meta.tagIds || []).includes(id));
+    if (matched.length) {
+      const peers = allMetas.filter(m => !m.archived && (m.tagIds || []).some(id => (c.tagIds || []).includes(id))).length || 1;
+      total += (+c.pct || 0) / peers;
+    }
+  }
+  return Math.max(0, Math.min(100, total));
+}
+
+/** Constrói a bolacha diretamente das Metas. Não cria categorias paralelas. */
+export function modelFromMetas(metas = [], legacyModel = null) {
+  const list = metas.filter(m => !m.archived && (m.kind || 'expense') !== 'income');
+  return {
+    id: 'metas-linked', name: 'Metas cadastradas',
+    deduction: (legacyModel && legacyModel.deduction) || { on: false, mode: 'value', value: 0 },
+    cats: list.map(m => ({
+      id: m.id, metaId: m.id, name: m.name, pct: metaDistributionPct(m, legacyModel, metas),
+      color: m.color || '#8cb6e4', kind: m.kind === 'saving' ? 'save' : 'spend',
+      metaIds: [m.id], tagIds: [], piggyIds: m.kind === 'saving' && m.piggyId ? [m.piggyId] : [], archived: false,
+    })),
+  };
+}
+export const activeModelOf = cfg => cfg.legacyModel || { id: 'metas-linked', name: 'Metas cadastradas', deduction: cfg.deduction, cats: [] };
 export const liveCats = model => (model.cats || []).filter(c => !c.archived);
 
 /** Soma dos % das categorias ativas e quanto falta (positivo) ou passou (negativo) de 100%. */

@@ -604,7 +604,7 @@ const simCfgOf = () => SIM.simConfig(treasury(), simSources(), S().settings.defa
 const pctTxt = v => String(Math.round(v * 100) / 100).replace('.', ',');
 /** % da divisão da renda destinado ao Tesouro, mês a mês (base "divisão da renda" da simulação). */
 function treasuryPlanMonth(ids, y, m) {
-  const cfg = budgetCfg(), model = B.activeModelOf(cfg);
+  const cfg = budgetCfg(), model = budgetModel(cfg);
   const pct = B.liveCats(model).filter(c => (c.piggyIds || []).includes(B.TREASURY)).reduce((s, c) => s + (+c.pct || 0), 0);
   if (!pct) return { value: 0, planned: false };
   const d = B.distribution({ data: S().data, model, ids, from: iso(y, m, 1), to: iso(y, m, daysInMonth(y, m)), metas: [...S().metas.values()], piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId });
@@ -780,7 +780,7 @@ function treasuryConfigView() {
     title: 'Configurações', get sub() { return C.esc(treasuryName()); },
     body: () => {
       const cfg = simCfgOf(), v = trView(), { esc } = C, rn = SIM.nominalRate(cfg.rate, cfg.ipca);
-      const planPct = B.liveCats(B.activeModelOf(budgetCfg())).filter(c => (c.piggyIds || []).includes(B.TREASURY)).reduce((s, c) => s + (+c.pct || 0), 0);
+      const planPct = B.liveCats(budgetModel(budgetCfg())).filter(c => (c.piggyIds || []).includes(B.TREASURY)).reduce((s, c) => s + (+c.pct || 0), 0);
       const sw = (k, on, extra = '') => `<input type="checkbox" class="switch" data-k="${k}" ${extra} ${on ? 'checked' : ''}>`;
       return `<div class="group-title">Contas que entram na projeção</div>
         <div class="group sim-srcs">${simSources().map(a => `<label class="row"><span class="grow"><b>${esc(a.name)}</b></span>${sw('src-on', cfg.sources[a.id] && cfg.sources[a.id].on, `data-acc="${a.id}"`)}</label>`).join('')}</div>
@@ -926,7 +926,7 @@ function metasView() {
       const cards = k => all.filter(x => (x.kind || 'expense') === k).map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
       const exp = cards('expense'), inc = cards('income'), sav = all.filter(x => x.kind === 'saving').map(savingCard).join('');
       return `<div class="donut-card"><div class="donut-head"><b>Divisão da renda · ${MONTHS[m - 1]} ${y}</b><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar a divisão da renda">${C.icon('gear')}</button></div>
-          <p class="hint dist-model">${C.esc(B.activeModelOf(cfg).name)}</p>${rendaBolacha(cfg, d, sel, only, 'd')}</div>
+          <p class="hint dist-model">Distribuição vinculada às Metas cadastradas</p>${rendaBolacha(cfg, d, sel, only, 'd')}</div>
         ${exp ? `<div class="section-label"><span>METAS DE GASTOS</span></div>${exp}` : ''}
         ${inc ? `<div class="section-label"><span>METAS DE RECEITAS</span></div>${inc}` : ''}
         ${sav ? `<div class="section-label"><span>METAS DE ACUMULAÇÃO</span></div>${sav}` : ''}
@@ -945,17 +945,17 @@ function metasView() {
 
 // ------------------------------------------------------------------ DIVISÃO DA RENDA (bolacha de 100%)
 function budgetCfg() {
-  const cfg = B.budgetConfig(S().settings, C.uid);
-  // o modelo inicial é gravado na primeira vez, para os ids das categorias ficarem estáveis
-  if (!S().settings.budget || !Array.isArray(S().settings.budget.models) || !S().settings.budget.models.length) {
-    S().settings.budget = { ...(S().settings.budget || {}), models: cfg.models, activeModel: cfg.activeModel };
-    C.saveSettings();
-  }
-  return cfg;
+  return B.budgetConfig(S().settings);
 }
 function saveBudget(cfg) {
-  S().settings.budget = { models: cfg.models, activeModel: cfg.activeModel, accounts: cfg.accounts, showOnCalendar: cfg.showOnCalendar, showLegendValues: cfg.showLegendValues, showPlanVsReal: cfg.showPlanVsReal };
+  // Preserva configurações antigas para compatibilidade; a origem das fatias agora são as Metas.
+  const old = S().settings.budget || {};
+  S().settings.budget = { ...old, accounts: cfg.accounts, showOnCalendar: cfg.showOnCalendar,
+    showLegendValues: cfg.showLegendValues, showPlanVsReal: cfg.showPlanVsReal, deduction: cfg.deduction };
   C.saveSettings(); render(); C.refresh();
+}
+function budgetModel(cfg = budgetCfg()) {
+  return B.modelFromMetas([...S().metas.values()], cfg.legacyModel);
 }
 /** Contas da análise: as escolhidas na configuração (ou a conta exibida). `only` = ver uma conta só. */
 function budgetIds(cfg, only) {
@@ -965,7 +965,7 @@ function budgetIds(cfg, only) {
 }
 function budgetDist(from, to, only) {
   const cfg = budgetCfg();
-  return { cfg, d: B.distribution({ data: S().data, model: B.activeModelOf(cfg), ids: budgetIds(cfg, only), from, to, metas: [...S().metas.values()], piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId }) };
+  return { cfg, d: B.distribution({ data: S().data, model: budgetModel(cfg), ids: budgetIds(cfg, only), from, to, metas: [...S().metas.values()], piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId }) };
 }
 /**
  * A bolacha da renda: cada categoria é uma fatia do tamanho do que o plano destina (ou do que já foi, se passou);
@@ -1016,8 +1016,10 @@ function rendaBolacha(cfg, d, sel, only, act = 'd') {
         const by = new Map();
         for (const x of c.items) {
           const it = x.it, mt = it.metaId ? S().metas.get(it.metaId) : [...S().metas.values()].find(m => (m.tagIds || []).includes(it.tagId));
-          const key = it.piggyId ? 'pig:' + it.piggyId : it.kind === 'transfer' ? 'tr' : mt ? mt.id : '';
-          const g = by.get(key) || { name: it.piggyId ? `Cofrinho ${(S().piggies.get(it.piggyId) || {}).name || ''}` : it.kind === 'transfer' ? treasuryName() : mt ? mt.name : 'Sem meta', planned: 0, real: 0, tags: new Map() };
+          // A fatia pertence à Meta; todos os movimentos atribuídos a ela ficam agrupados pelo nome da própria Meta.
+          const ownerMeta = (c.metaIds || []).map(id => S().metas.get(id)).find(Boolean) || mt;
+          const key = ownerMeta ? ownerMeta.id : it.piggyId ? 'pig:' + it.piggyId : it.kind === 'transfer' ? 'tr' : '';
+          const g = by.get(key) || { name: ownerMeta ? ownerMeta.name : it.piggyId ? `Cofrinho ${(S().piggies.get(it.piggyId) || {}).name || ''}` : it.kind === 'transfer' ? treasuryName() : 'Sem meta', planned: 0, real: 0, tags: new Map() };
           g.planned += x.planned; g.real += x.real;
           const tn = it.tagId ? (C.tag(it.tagId) || {}).name : '';
           if (tn) g.tags.set(tn, (g.tags.get(tn) || 0) + (x.real || x.planned));
@@ -1046,114 +1048,58 @@ function rendaBolacha(cfg, d, sel, only, act = 'd') {
 /** Engrenagem da divisão da renda: exibição, contas, modelo, doações e categorias. */
 function budgetConfigView() {
   return {
-    title: 'Divisão da renda', right: { icon: 'plus', fn: () => push(budgetCatForm(null)) },
+    title: 'Divisão da renda',
     body: () => {
-      const cfg = budgetCfg(), model = B.activeModelOf(cfg), { esc } = C, pc = B.pctCheck(model);
-      const d = model.deduction || {};
+      const cfg = budgetCfg(), model = budgetModel(cfg), { esc } = C, pc = B.pctCheck(model);
+      const d = cfg.deduction || { on: false, mode: 'value', value: 0 };
       const sw = (k, on) => `<input type="checkbox" class="switch" data-k="${k}" ${on ? 'checked' : ''}>`;
       const accs = C.accountsList().filter(a => a.type !== 'piggy' && a.type !== 'treasury');
-      const cats = B.liveCats(model), arch = (model.cats || []).filter(c => c.archived);
-      const invest = cats.filter(c => c.kind === 'save' && ((c.piggyIds || []).includes(B.TREASURY) || /invest|liberdade/i.test(c.name))).reduce((s, c) => s + (+c.pct || 0), 0);
-      const links = c => [...(c.metaIds || []).map(id => (S().metas.get(id) || {}).name), ...(c.tagIds || []).map(id => (C.tag(id) || {}).name), ...(c.piggyIds || []).map(id => (id === B.TREASURY ? treasuryName() : (S().piggies.get(id) || {}).name))].filter(Boolean);
+      const metas = [...S().metas.values()].filter(m => !m.archived && (m.kind || 'expense') !== 'income')
+        .sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
+      const cats = B.liveCats(model);
+      const invest = cats.filter(c => c.kind === 'save').reduce((s, c) => s + (+c.pct || 0), 0);
       return `<div class="group">
           <label class="row"><span class="grow">Mostrar a bolacha abaixo do calendário</span>${sw('showOnCalendar', cfg.showOnCalendar)}</label>
           <label class="row"><span class="grow">Valores na legenda</span>${sw('showLegendValues', cfg.showLegendValues)}</label>
-          <label class="row"><span class="grow">Planejado x previsto nos detalhes</span>${sw('showPlanVsReal', cfg.showPlanVsReal)}</label>
+          <label class="row"><span class="grow">Planejado x realizado nos detalhes</span>${sw('showPlanVsReal', cfg.showPlanVsReal)}</label>
         </div>
-        <div class="group-title">Contas da renda</div>
+        <div class="group-title">Contas consideradas na renda</div>
         <div class="chips">${accs.map(a => `<button type="button" class="chip${cfg.accounts.includes(a.id) ? ' on' : ''}" data-a="acc" data-id="${a.id}">${esc(a.name)}</button>`).join('')}</div>
-        <p class="hint">${cfg.accounts.length ? 'Com mais de uma conta, a renda é somada sem contar transferências entre elas; dá para ver uma conta por vez na própria bolacha.' : 'Nenhuma marcada: usa a conta que está sendo exibida.'}</p>
-        <div class="group-title">Modelo</div>
+        <p class="hint">Nenhuma conta marcada: utiliza a conta atualmente selecionada. Com várias contas, transferências internas não aumentam a renda.</p>
+        <div class="group-title">Descontos antes da distribuição</div>
         <div class="group">
-          <label class="row field"><span>Modelo em uso</span><select data-k="model">${cfg.models.map(m => `<option value="${m.id}" ${m.id === model.id ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select></label>
-          <label class="row field"><span>Nome</span><input type="text" data-k="modelName" value="${esc(model.name)}" maxlength="40"></label>
-        </div>
-        <div class="btn-row"><button class="primary-btn ghost sm" data-a="dup">Salvar como novo</button><button class="primary-btn ghost sm" data-a="tpl">Novo pelo modelo do Sardinha</button>${cfg.models.length > 1 ? '<button class="primary-btn ghost sm" data-a="delModel">Excluir modelo</button>' : ''}</div>
-        <div class="group-title">Doações e dízimo (antes da divisão)</div>
-        <div class="group">
-          <label class="row"><span class="grow">Descontar antes de dividir</span>${sw('dedOn', d.on)}</label>
+          <label class="row"><span class="grow">Descontar doações ou dízimo antes de distribuir</span>${sw('dedOn', d.on)}</label>
           ${d.on ? `<label class="row field"><span>Tipo</span><select data-k="dedMode"><option value="value" ${d.mode !== 'percent' ? 'selected' : ''}>Valor por mês</option><option value="percent" ${d.mode === 'percent' ? 'selected' : ''}>% da renda</option></select></label>
           <label class="row field"><span>${d.mode === 'percent' ? 'Percentual (%)' : 'Valor por mês'}</span><input type="text" inputmode="decimal" data-k="dedValue" value="${d.mode === 'percent' ? pctTxt(+d.value || 0) : C.moneyInput(+d.value || 0)}"></label>` : ''}
         </div>
-        <div class="group-title">Categorias <span class="${pc.ok ? 'pos' : pc.missing < 0 ? 'neg' : 'warn'}">${pctTxt(pc.sum)}%</span></div>
-        ${!pc.ok ? `<p class="hint ${pc.missing < 0 ? 'neg' : 'warn'}">${pc.missing > 0 ? `Faltam ${pctTxt(pc.missing)}% para fechar 100%.` : `Passou ${pctTxt(-pc.missing)}% de 100%.`} Ajuste os percentuais ou abra uma categoria e toque em "Ajustar as outras".</p>` : ''}
-        <div class="group">${cats.map(c => `<button class="row dist-cat" data-a="cat" data-id="${c.id}"><span class="dot" style="background:${c.color}"></span><span class="grow"><b>${esc(c.name)}</b><small>${c.kind === 'save' ? 'guardar/investir' : 'gastar'}${links(c).length ? ' · ' + esc(links(c).join(', ')) : ' · sem vínculos'}</small></span><b>${pctTxt(+c.pct || 0)}%</b></button>`).join('')}</div>
-        ${invest < B.GUIDE.investMin ? `<p class="hint">Orientação do método: destinar ${B.GUIDE.investIdeal}% a investimentos (pelo menos ${B.GUIDE.investMin}% em meses apertados). É só uma referência.</p>` : ''}
-        ${arch.length ? `<div class="group-title">Arquivadas</div><div class="group">${arch.map(c => `<button class="row dist-cat" data-a="cat" data-id="${c.id}"><span class="dot" style="background:${c.color}"></span><span class="grow muted">${esc(c.name)}</span><b class="muted">${pctTxt(+c.pct || 0)}%</b></button>`).join('')}</div>` : ''}
-        <p class="hint">Cada categoria usa as metas, tags, cofrinhos e o Tesouro que já existem. Um lançamento conta numa categoria só.</p>`;
+        <div class="group-title">Metas que compõem a bolacha <span class="${pc.ok ? 'pos' : pc.missing < 0 ? 'neg' : 'warn'}">${pctTxt(pc.sum)}%</span></div>
+        <p class="hint">A bolacha não possui categorias próprias. Cada segmento corresponde diretamente a uma Meta cadastrada. Para alterar nome, cor ou percentual, abra a própria Meta abaixo.</p>
+        ${!pc.ok ? `<p class="hint ${pc.missing < 0 ? 'neg' : 'warn'}">${pc.missing > 0 ? `Faltam ${pctTxt(pc.missing)}% para distribuir.` : `As Metas somam ${pctTxt(-pc.missing)}% acima de 100%.`} Ajuste os percentuais nas próprias Metas.</p>` : ''}
+        <div class="group">${metas.map(m => {
+          const c = cats.find(x => x.id === m.id), pct = c ? +c.pct || 0 : 0;
+          const links = m.kind === 'saving' ? (m.piggyId ? (S().piggies.get(m.piggyId) || {}).name || (m.piggyId === B.TREASURY ? treasuryName() : '') : '') : (m.tagIds || []).map(id => (C.tag(id) || {}).name).filter(Boolean).join(', ');
+          return `<button class="row dist-cat" data-a="meta" data-id="${m.id}"><span class="dot" style="background:${m.color || 'var(--accent)'}"></span><span class="grow"><b>${esc(m.name)}</b><small>${m.kind === 'saving' ? 'Meta de acumulação' : 'Meta de despesas'}${links ? ` · ${esc(links)}` : ''}</small></span><b>${pctTxt(pct)}%</b></button>`;
+        }).join('') || '<p class="hint">Crie uma Meta de despesas ou de acumulação para vinculá-la à bolacha.</p>'}</div>
+        ${invest < B.GUIDE.investMin ? `<p class="hint">Referência opcional: destinar ${B.GUIDE.investIdeal}% à acumulação/investimentos, tentando manter pelo menos ${B.GUIDE.investMin}% em períodos mais apertados.</p>` : ''}
+        <p class="hint">Metas de receita definem e acompanham os recebimentos que formam a base de 100%. Metas de despesas e de acumulação definem os segmentos da distribuição. Tags continuam pertencendo às suas Metas.</p>`;
     },
     onField: (el2, type) => {
       if (type !== 'change') return;
-      const cfg = budgetCfg(), model = B.activeModelOf(cfg), k = el2.dataset.k;
-      const setModel = m => { cfg.models = cfg.models.map(x => (x.id === m.id ? m : x)); saveBudget(cfg); };
+      const cfg = budgetCfg(), k = el2.dataset.k;
       if (['showOnCalendar', 'showLegendValues', 'showPlanVsReal'].includes(k)) { cfg[k] = el2.checked; return saveBudget(cfg); }
-      if (k === 'model') { cfg.activeModel = el2.value; return saveBudget(cfg); }
-      if (k === 'modelName') return setModel({ ...model, name: el2.value.trim() || model.name });
-      if (k === 'dedOn') return setModel({ ...model, deduction: { ...(model.deduction || { mode: 'value', value: 0 }), on: el2.checked } });
-      if (k === 'dedMode') return setModel({ ...model, deduction: { ...model.deduction, mode: el2.value, value: 0 } });
+      if (k === 'dedOn') { cfg.deduction = { ...(cfg.deduction || { mode: 'value', value: 0 }), on: el2.checked }; return saveBudget(cfg); }
+      if (k === 'dedMode') { cfg.deduction = { ...cfg.deduction, mode: el2.value, value: 0 }; return saveBudget(cfg); }
       if (k === 'dedValue') {
-        const v = model.deduction.mode === 'percent' ? parseFloat(String(el2.value).replace(',', '.')) : C.parseMoney(el2.value);
-        if (!Number.isFinite(v) || v < 0 || (model.deduction.mode === 'percent' && v > 100)) { C.toast('Valor inválido'); render(); return; }
-        return setModel({ ...model, deduction: { ...model.deduction, value: v } });
+        const v = cfg.deduction.mode === 'percent' ? parseFloat(String(el2.value).replace(',', '.')) : C.parseMoney(el2.value);
+        if (!Number.isFinite(v) || v < 0 || (cfg.deduction.mode === 'percent' && v > 100)) { C.toast('Valor inválido'); render(); return; }
+        cfg.deduction = { ...cfg.deduction, value: v }; return saveBudget(cfg);
       }
     },
     actions: {
-      cat: id => push(budgetCatForm(id)),
+      meta: id => push(metaForm(id)),
       acc: id => { const cfg = budgetCfg(), set = new Set(cfg.accounts); set.has(id) ? set.delete(id) : set.add(id); cfg.accounts = [...set]; saveBudget(cfg); },
-      dup: () => { const cfg = budgetCfg(), m = B.activeModelOf(cfg); const copy = { ...structuredClone(m), id: C.uid(), name: `${m.name} (cópia)`, cats: m.cats.map(c => ({ ...structuredClone(c), id: C.uid() })) }; cfg.models = [...cfg.models, copy]; cfg.activeModel = copy.id; saveBudget(cfg); C.toast('Modelo salvo'); },
-      tpl: () => { const cfg = budgetCfg(), m = B.modelFromTemplate(B.TEMPLATE_SARDINHA, C.uid); cfg.models = [...cfg.models, m]; cfg.activeModel = m.id; saveBudget(cfg); C.toast('Modelo do Sardinha criado'); },
-      delModel: async () => { const cfg = budgetCfg(); if (cfg.models.length < 2) return; if (!(await C.confirmDlg('Excluir este modelo?', 'Os lançamentos, metas e cofrinhos não são afetados.', 'Excluir', 'danger'))) return; cfg.models = cfg.models.filter(m => m.id !== cfg.activeModel); cfg.activeModel = cfg.models[0].id; saveBudget(cfg); },
     },
   };
-}
-
-/** Categoria da divisão: nome, %, cor, tipo e vínculos com metas, tags, cofrinhos e Tesouro. */
-function budgetCatForm(catId) {
-  const cfg0 = budgetCfg(), model0 = B.activeModelOf(cfg0);
-  const c = catId ? model0.cats.find(x => x.id === catId) : null;
-  const value = c ? { ...c, metaIds: [...(c.metaIds || [])], tagIds: [...(c.tagIds || [])], piggyIds: [...(c.piggyIds || [])] }
-    : { name: '', pct: Math.max(0, B.pctCheck(model0).missing), color: C.PALETTE[(model0.cats.length * 5 + 2) % C.PALETTE.length], kind: 'spend', metaIds: [], tagIds: [], piggyIds: [], archived: false };
-  const saveCat = v => {
-    const cfg = budgetCfg(), model = B.activeModelOf(cfg);
-    const obj = { ...(c || { id: C.uid() }), ...v, pct: Math.max(0, +v.pct || 0) };
-    const cats = c ? model.cats.map(x => (x.id === c.id ? obj : x)) : [...model.cats, obj];
-    cfg.models = cfg.models.map(x => (x.id === model.id ? { ...model, cats } : x));
-    saveBudget(cfg);
-    return obj;
-  };
-  const view = formView({
-    title: c ? 'Categoria' : 'Nova categoria', value,
-    fields: [
-      { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Custos Fixos' },
-      { k: 'pct', label: 'Percentual da renda (%)', type: 'number', min: 0 },
-      { k: 'kind', label: 'Tipo', type: 'select', options: [['spend', 'Gastar (limite de despesas)'], ['save', 'Guardar ou investir']] },
-      { k: 'color', label: 'Cor', type: 'color' },
-      { section: 'Vínculos' },
-      { k: 'metaIds', label: 'Metas', type: 'multi', options: () => [...S().metas.values()].filter(m => !m.archived && (m.kind || 'expense') === 'expense').map(m => [m.id, m.name, m.color]) },
-      { k: 'tagIds', label: 'Tags', type: 'multi', options: tagOptions('expense') },
-      { k: 'piggyIds', label: 'Cofrinhos e Tesouro', type: 'multi', options: () => [...(treasury().accountId ? [[B.TREASURY, treasuryName(), '#45cf7f']] : []), ...[...S().piggies.values()].filter(p => !p.archived).map(p => [p.id, `Cofrinho ${p.name}`, p.color])] },
-      { hint: 'Gastos entram pelas metas e tags; dinheiro guardado entra pelos depósitos reais nos cofrinhos e aportes no Tesouro. Nada é contado duas vezes.' },
-      { section: '' },
-      { k: 'archived', label: 'Arquivar (some da bolacha, sem apagar)', type: 'switch', show: () => !!c },
-    ],
-    onSave: async v => { saveCat(v); C.toast(c ? 'Categoria atualizada' : 'Categoria criada'); },
-    onDelete: c && (async () => {
-      if (!(await C.confirmDlg('Excluir categoria?', 'Os lançamentos, metas e cofrinhos ligados não são afetados.', 'Excluir', 'danger'))) return false;
-      const cfg = budgetCfg(), model = B.activeModelOf(cfg);
-      cfg.models = cfg.models.map(x => (x.id === model.id ? { ...model, cats: model.cats.filter(q => q.id !== c.id) } : x));
-      saveBudget(cfg); back(); return false; // volta só para a lista de categorias
-    }),
-    extra: () => (c ? '<div class="btn-row"><button class="primary-btn ghost" data-a="rebal">Ajustar as outras para fechar 100%</button></div>' : ''),
-    extraActions: {
-      rebal: async () => {
-        const obj = saveCat(view.vals);
-        const cfg = budgetCfg(), model = B.activeModelOf(cfg);
-        cfg.models = cfg.models.map(x => (x.id === model.id ? B.rebalance(model, obj.id) : x));
-        saveBudget(cfg); C.toast('As outras categorias foram ajustadas proporcionalmente'); back();
-      },
-    },
-  });
-  return view;
 }
 
 function savingCard(m) {
@@ -1295,14 +1241,16 @@ function savingHint(v) {
   return `<b>Guardar ${C.money(plan.perPeriod)} por ${u}</b> · ${plan.periods} ${u === 'mês' ? (plan.periods === 1 ? 'mês' : 'meses') : u === 'dia' ? 'dias' : u + (plan.periods === 1 ? '' : 's')} até ${C.dmy(v.deadline)}${plan.saved ? ` · já guardado ${C.money(plan.saved)}` : ''} (sem rendimento).`;
 }
 function metaForm(m = null) {
-  const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '' };
+  const value = m ? { ...m, allocationPct: B.metaDistributionPct(m, budgetCfg().legacyModel, [...S().metas.values()]), tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
+    : { name: '', kind: 'expense', period: 'month', amount: 0, allocationPct: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '' };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
     fields: [
       { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Alimentação' },
       { k: 'kind', label: 'Tipo', type: 'select', options: [['expense', 'Limite de gastos'], ['income', 'Meta de receita'], ['saving', 'Acumulação (juntar até uma data)']] },
+      { k: 'allocationPct', label: 'Percentual da renda destinado a esta Meta (%)', type: 'number', min: 0, max: 100, show: v => v.kind !== 'income' },
+      { hint: 'Esse percentual faz esta própria Meta compor a bolacha de distribuição da renda. Não existe cadastro separado de categoria.', show: v => v.kind !== 'income' },
       // ---- acumulação: quanto juntar, até quando e com que frequência; o app calcula quanto guardar por período
       { k: 'amount', label: 'Quanto quer juntar', type: 'money', show: v => v.kind === 'saving' },
       { k: 'deadline', label: 'Até quando', type: 'date', show: v => v.kind === 'saving' },
@@ -1339,7 +1287,9 @@ function metaForm(m = null) {
     ],
     onSave: async v => {
       const { originsTxt, ...rest } = v;
-      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, onlyAssigned: true, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
+      const allocationPct = Number(rest.allocationPct ?? 0);
+      if (rest.kind !== 'income' && (!Number.isFinite(allocationPct) || allocationPct < 0 || allocationPct > 100)) { C.toast('O percentual da Meta deve ficar entre 0 e 100.'); return false; }
+      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, allocationPct: rest.kind === 'income' ? null : allocationPct, onlyAssigned: true, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
       if (obj.kind === 'saving') {
         if (!obj.amount || !obj.deadline) { C.toast('Informe quanto quer juntar e até quando'); return false; }
         obj.freq = obj.freq || 'month'; obj.start = obj.start || C.today(); obj.tagIds = []; obj.period = 'custom';
