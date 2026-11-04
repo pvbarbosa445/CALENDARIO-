@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.0.1';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -324,8 +324,8 @@ function measureCal() {
   // para o mês caber inteiro na tela sem rolar (e o cabeçalho dos dias da semana nunca ficar escondido)
   const gap = parseFloat(getComputedStyle(grid).rowGap) || 0;
   const reserve = isWide()
-    ? Math.max(44, $('#summary').getBoundingClientRect().height) + (parseFloat(getComputedStyle($('main')).paddingBottom) || 0) + 6
-    : Math.max(92, ($('#summary').getBoundingClientRect().height || 0) + 26);
+    ? 24 + (parseFloat(getComputedStyle($('main')).paddingBottom) || 0)
+    : 84; // o resumo agora fica em cima; embaixo só o espaço do botão +
   const fill = Math.floor((vh - top - reserve - gap * (CAL.rows - 1)) / CAL.rows);
   CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
   // PC: dias com altura máxima confortável (e o mês inteiro cabendo na tela); celular: expandido preenche a tela
@@ -546,7 +546,9 @@ function renderSummary() {
   const nx = nextIncome(td);
   if (nx) {
     const left = untilNextIncome(td, nx.date, now);
-    $('#mbNextLabel').textContent = `${left < 0 ? 'Faltam' : 'Sobra'} até ${nx.title} · ${dm(nx.date)}`;
+    // como no app antigo: "FALTAM/SOBRA ATÉ RECEBER" (o nome da receita fica no título, ao segurar o dedo)
+    $('#mbNextLabel').textContent = `${left < 0 ? 'Faltam' : 'Sobra'} até receber · ${dm(nx.date)}`;
+    $('#summary .mb-next').title = `${nx.title} em ${dm(nx.date)}`;
     $('#mbNext').textContent = money(Math.abs(left));
     $('#mbNext').className = left < 0 ? 'neg' : 'pos';
   } else {

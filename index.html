@@ -33,12 +33,7 @@
   </header>
 
   <main>
-    <div class="weekdays" id="weekdays"></div>
-    <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
-    <!-- visualizações Dia, Semana e Ano (o Mês usa a grade acima) -->
-    <div class="alt-view" id="altView" hidden></div>
-    <div class="cal-handle" id="calHandle" role="button" tabindex="0" aria-label="Expandir ou recolher o calendário"><i></i></div>
-    <!-- resumo do dinheiro (como no app antigo): saldo na conta, sobra até a próxima receita e o mês -->
+    <!-- resumo do dinheiro em cima do calendário, como no app antigo: saldo na conta, sobra/falta até a próxima receita e o mês -->
     <section class="money" id="summary" aria-label="Resumo do dinheiro">
       <div class="mb-top">
         <div class="mb-bal"><small>Saldo na conta</small><b id="mbBal"></b></div>
@@ -50,6 +45,11 @@
         <div><small id="summaryLabel">Vai sobrar</small><b id="summaryValue"></b></div>
       </div>
     </section>
+    <div class="weekdays" id="weekdays"></div>
+    <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
+    <!-- visualizações Dia, Semana e Ano (o Mês usa a grade acima) -->
+    <div class="alt-view" id="altView" hidden></div>
+    <div class="cal-handle" id="calHandle" role="button" tabindex="0" aria-label="Expandir ou recolher o calendário"><i></i></div>
     <div id="panels"></div>
   </main>
 

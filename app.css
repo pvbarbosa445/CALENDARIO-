@@ -1048,3 +1048,42 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
 .yr { align-items: start; }
 .ym { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
 .ym > b { align-self: center; }
+
+/* =================== v2.0.1 — resumo do dinheiro em cima do calendário (como no app antigo) =================== */
+.money { margin: 4px 0 10px; padding: 14px 16px 12px; border: 0; border-radius: 16px; background: #141414; }
+.money small { text-transform: uppercase; letter-spacing: .5px; font-size: 10.5px; font-weight: 600; color: var(--text-2); }
+.money .mb-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: end; flex-wrap: nowrap; }
+.money .mb-bal b { font-size: 25px; color: #FFFFFF; }
+.money .mb-next { text-align: right; flex-basis: auto; }
+.money .mb-next small { display: block; white-space: normal; line-height: 1.3; }
+.money .mb-next b { display: block; margin: 2px 0 0; font-size: 20px; }
+.money .mb-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 12px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.money .mb-row > div:nth-child(2) { text-align: center; }
+.money .mb-row > div:nth-child(3) { text-align: right; }
+.money .mb-row b { font-size: 14.5px; }
+@media (max-width: 1099px) { .money { padding-right: 16px; margin-left: 6px; margin-right: 6px; } }
+@media (min-width: 1100px) {
+  .money { margin: 2px 0 10px; padding: 16px 20px 14px; }
+  .money .mb-bal b { font-size: 28px; }
+  .money .mb-next b { font-size: 22px; }
+}
+.money { width: auto; box-sizing: border-box; }
+/* resumo compacto: o calendário mantém o espaço dos lançamentos */
+.money { padding: 10px 14px 9px; margin-bottom: 8px; }
+.money small { font-size: 10px; }
+.money .mb-bal b { font-size: 22px; }
+.money .mb-next b { font-size: 18px; }
+.money .mb-row { margin-top: 8px; padding-top: 7px; }
+.money .mb-row b { font-size: 13.5px; }
+/* PC: uma faixa só, com os cinco valores lado a lado */
+@media (min-width: 1100px) {
+  .money { display: flex; align-items: flex-end; gap: 24px; padding: 12px 20px; }
+  .money .mb-top { display: contents; }
+  .money .mb-row { display: contents; }
+  .money .mb-row > div, .money .mb-bal, .money .mb-next { text-align: left !important; flex: 1 1 0; min-width: 0; }
+  .money .mb-bal { flex: 1.2 1 0; }
+  .money .mb-next { flex: 1.6 1 0; order: 5; text-align: right !important; }
+  .money .mb-next small { white-space: nowrap; }
+  .money .mb-bal b { font-size: 24px; }
+  .money .mb-next b, .money .mb-row b { font-size: 17px; }
+}
