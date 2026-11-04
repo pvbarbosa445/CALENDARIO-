@@ -18,7 +18,7 @@
     <div class="bar-normal">
       <button class="icon-btn" id="btnMenu" aria-label="Menu" data-icon="dots"></button>
       <button class="month-title" id="btnToday" aria-label="Voltar para hoje"><span id="monthName"></span><span id="yearName"></span><span id="accLabel"></span></button>
-      <button class="icon-btn view-btn" id="btnView" aria-label="Mostrar lançamentos nos dias" aria-pressed="false" data-icon="rows"></button>
+      <button class="icon-btn view-btn" id="btnView" aria-label="Escolher a visualização (dia, semana, mês ou ano)" aria-haspopup="menu" data-icon="calendar"></button>
       <button class="icon-btn bell" id="btnAlerts" aria-label="Alertas" hidden><span data-icon="bell"></span><i id="alertBadge"></i></button>
       <button class="new-btn" id="btnNewTop" aria-label="Novo lançamento"><span data-icon="plus"></span>Novo</button>
       <button class="icon-btn" id="btnPrev" aria-label="Mês anterior" data-icon="left"></button>
@@ -35,6 +35,8 @@
   <main>
     <div class="weekdays" id="weekdays"></div>
     <div class="grid-wrap" id="gridWrap"><div class="grid" id="grid"></div></div>
+    <!-- visualizações Dia, Semana e Ano (o Mês usa a grade acima) -->
+    <div class="alt-view" id="altView" hidden></div>
     <div class="cal-handle" id="calHandle" role="button" tabindex="0" aria-label="Expandir ou recolher o calendário"><i></i></div>
     <!-- resumo do dinheiro (como no app antigo): saldo na conta, sobra até a próxima receita e o mês -->
     <section class="money" id="summary" aria-label="Resumo do dinheiro">
@@ -76,6 +78,7 @@
         <label class="row"><span class="dot inc"></span><span>Receitas</span><input type="checkbox" class="switch" data-setting="showIncome"></label>
         <label class="row"><span class="dot exp"></span><span>Despesas</span><input type="checkbox" class="switch" data-setting="showExpense"></label>
         <label class="row"><span class="dot tag"></span><span>Tags</span><input type="checkbox" class="switch" data-setting="showTags"></label>
+        <label class="row" id="rowExpand"><span>Calendário ampliado</span><input type="checkbox" class="switch" id="swExpand"></label>
         <label class="row" id="rowTransfers" hidden><span>Transferências e cofrinhos</span><input type="checkbox" class="switch" data-setting="showTransfers"></label>
       </div>
 
@@ -227,6 +230,15 @@
     <div class="dialog-card"><div class="dialog-title" id="dlgTitle"></div><div class="dialog-body" id="dlgBody"></div><div class="dialog-actions" id="dlgActions"></div></div>
   </div>
 
+  <!-- escolha da visualização (botão do topo) -->
+  <div class="view-pop" id="viewPop" role="menu" aria-label="Visualização" aria-hidden="true">
+    <div class="vp-title">Visualização</div>
+    <button role="menuitemradio" data-view="year"><span>Ano</span><i>✓</i></button>
+    <button role="menuitemradio" data-view="month"><span>Mês</span><i>✓</i></button>
+    <button role="menuitemradio" data-view="week"><span>Semana</span><i>✓</i></button>
+    <button role="menuitemradio" data-view="day"><span>Dia</span><i>✓</i></button>
+    <button role="menuitemradio" data-view="agenda"><span>Agenda</span><i>✓</i></button>
+  </div>
   <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastUndo">Desfazer</button></div>
 
   <script type="module" src="app.js"></script>

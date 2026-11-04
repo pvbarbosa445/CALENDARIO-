@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.8';
+export const APP_VERSION = '2.0.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -48,7 +48,7 @@ const DEFAULTS = {
   showTransfers: true, hiddenAccounts: [], activeAccount: null, defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
-  summaryOpen: false, calExpanded: false, edgeY: null,
+  summaryOpen: false, calExpanded: false, edgeY: null, calView: 'month',
 };
 const S = {
   entries: new Map(), overrides: new Map(), checks: new Map(), tags: new Map(),
@@ -349,13 +349,9 @@ function setExpanded(open) {
   syncViewBtn();
   if (S.calc) renderGrid();
 }
-/** Botão do topo que liga/desliga a visualização dos lançamentos nos dias (calendário expandido x recolhido). */
+/** Interruptor "Calendário ampliado" (menu › Exibição): mostra os lançamentos dentro dos dias. */
 function syncViewBtn() {
-  const b = $('#btnView'); if (!b) return;
-  const on = isExpanded();
-  b.classList.toggle('on', on);
-  b.setAttribute('aria-pressed', String(on));
-  b.setAttribute('aria-label', on ? 'Esconder os lançamentos dos dias' : 'Mostrar os lançamentos nos dias');
+  const sw = $('#swExpand'); if (sw) sw.checked = isExpanded();
 }
 window.addEventListener('resize', () => { clearTimeout(measureCal.t); measureCal.t = setTimeout(() => { measureCal(); if (S.calc) renderGrid(); }, 120); });
 
@@ -396,9 +392,15 @@ const confirmDlg = (title, text, label = 'Confirmar', cls = 'primary') =>
 
 // ---------- Calendário ----------
 function renderHeader() {
-  const { y, m } = S.view;
+  const { y, m } = S.view, v = calView();
+  if (v === 'day' || v === 'week') {
+    const d = S.selected || today();
+    $('#monthName').textContent = MONTHS[+d.slice(5, 7) - 1]; $('#yearName').textContent = d.slice(0, 4);
+  } else if (v === 'year') { $('#monthName').textContent = String(y); $('#yearName').textContent = ''; }
+  else {
   $('#monthName').textContent = MONTHS[m - 1];
   $('#yearName').textContent = y;
+  }
   // com mais de uma conta, mostra qual conta ("mundo") está sendo exibida
   const shown = filtering() ? accountsList().filter(x => S.set && S.set.has(x.id)).map(x => x.name) : [];
   $('#accLabel').textContent = shown.length ? shown.join(' + ') : (filtering() ? 'Nenhuma conta' : '');
@@ -436,6 +438,10 @@ function renderGrid(anim) {
   const { y, m } = S.view;
   const month = S.calc.computeMonth(y, m);
   S.month = month;
+  const alt = calView() !== 'month';
+  document.body.classList.toggle('alt-on', alt);
+  $('#altView').hidden = !alt;
+  if (alt) { renderAlt(); renderSummary(); return; }
   const s = S.settings, t = today();
   const first = iso(y, m, 1);
   const lead = (weekday(first) - (s.mondayFirst ? 1 : 0) + 7) % 7;
@@ -580,15 +586,139 @@ function untilNextIncome(td, H, now) {
 }
 
 function goMonth(delta) {
-  S.view = addMonths(S.view.y, S.view.m, delta);
+  const v = calView();
+  if (v === 'day' || v === 'week') {
+    S.selected = addDays(S.selected || today(), delta * (v === 'week' ? 7 : 1));
+    S.view = { y: +S.selected.slice(0, 4), m: +S.selected.slice(5, 7) };
+  } else if (v === 'year') S.view = { y: S.view.y + delta, m: S.view.m };
+  else S.view = addMonths(S.view.y, S.view.m, delta); // mês e agenda
   renderHeader();
   renderGrid(delta > 0 ? 'anim-l' : 'anim-r');
   if (S.selecting) updateSelUI();
 }
 function goToday() {
   const t = parse(today());
+  if (calView() !== 'month') {
+    S.selected = today(); S.view = { y: t.y, m: t.m };
+    renderHeader(); renderGrid(); return;
+  }
   const delta = (t.y * 12 + t.m) - (S.view.y * 12 + S.view.m);
   if (delta) goMonth(delta);
+}
+
+// ---------- Visualizações: Dia, Semana, Mês, Ano (botão do topo) ----------
+const calView = () => S.settings.calView || 'month';
+function setView(v) {
+  if (v === calView()) return;
+  S.settings.calView = v; saveSettings();
+  if (v === 'day' || v === 'week') {
+    // começa pelo dia escolhido (ou hoje, se ele não estiver no mês exibido)
+    const inView = S.selected && +S.selected.slice(0, 4) === S.view.y && +S.selected.slice(5, 7) === S.view.m;
+    if (!inView) S.selected = (S.view.y === parse(today()).y && S.view.m === parse(today()).m) ? today() : iso(S.view.y, S.view.m, 1);
+  }
+  renderHeader();
+  renderGrid();
+}
+// Como no app antigo: Semana = faixa com os 7 dias + o dia escolhido; Dia = o dia; Ano = 12 mini calendários;
+// Agenda = os dias do mês que têm lançamentos. Nos previstos: Paguei/Recebi, Editar, Não ocorreu.
+const DOW = ['DOM.', 'SEG.', 'TER.', 'QUA.', 'QUI.', 'SEX.', 'SÁB.'];
+const DOW_LONG = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+const MONTH_SHORT = m => MONTHS[m - 1].slice(0, 3).toLowerCase();
+const isOffDay = d => { const w = weekday(d); return w === 0 || w === 6 || !!S.isHoliday(d); };
+/** Lançamentos de um dia na ordem do calendário (mesmos filtros da grade). */
+function dayList(day) {
+  const s = S.settings;
+  const list = day.items.filter(it => countsPlanned(it) && accVisible(it) &&
+    (it.kind === 'income' || it.kind === 'expense' || (it.kind === 'transfer' && s.showTransfers)) && passesFilters(it));
+  const order = { income: 0, transfer: 1, expense: 2 };
+  return list.sort((a, b) => (order[a.kind] - order[b.kind]) || (b.amount - a.amount));
+}
+/** Conteúdo de um dia (como o leanDayHtml do app antigo). lite = sem o cartão de saldo (Agenda). */
+function dayContent(d, lite = false) {
+  const day = dayData(d), val = cellValue(day), list = dayList(day);
+  const show = detailed() || S.dayReveal === d;
+  let html = lite ? '' : `<div class="ldsum"><span>Saldo no fim do dia</span><b class="${val ? sgnCls(val) : ''}">${val === null ? '—' : signed(val)}</b></div>`;
+  if (!list.length) return html + (lite ? '' : '<div class="empty">Nada neste dia.</div>');
+  if (!show) return html + `<button class="reveal" data-reveal-alt="${d}">Mostrar lançamentos (${list.length})</button>`;
+  html += list.map(it => {
+    const sg = itemSign(it), open = it.status === 'planned' || it.status === 'pending';
+    const tg = tag(it.tagId), mt = itemMeta(it);
+    const sub = [tg && tg.name !== itemTitle(it) ? tg.name : null, !tg && mt && mt.name !== itemTitle(it) ? mt.name : null,
+      open ? (it.status === 'pending' ? 'pendente' : 'previsto') : statusLabel(it).toLowerCase()].filter(Boolean).join(' · ');
+    const row = `<div class="ldr" data-key="${esc(it.key)}" data-date="${it.date}"><i class="dot${open ? ' dash' : ''}" style="--c:${chipColor(itemColor(it))}"></i>
+      <span class="ldn"><b>${esc(itemTitle(it))}</b><small>${esc(sub)}</small></span>
+      <b class="${sg === '+' ? 'pos' : sg === '−' ? 'neg' : ''}">${sg}${money(it.amount)}</b></div>`;
+    if (!open) return `<div class="ldp done">${row}</div>`;
+    const k = esc(it.key);
+    return `<div class="ldp">${row}<div class="ldb">
+      <button class="primary-btn sm" data-run="pay" data-key="${k}" data-date="${it.date}">${it.kind === 'income' ? 'Recebi' : 'Paguei'}</button>
+      <button class="primary-btn ghost sm" data-run="edit" data-key="${k}" data-date="${it.date}">Editar</button>
+      <button class="primary-btn ghost sm" data-run="cancel" data-key="${k}" data-date="${it.date}">Não ocorreu</button></div></div>`;
+  }).join('');
+  return html;
+}
+function dayHead(d) {
+  const hol = S.isHoliday(d);
+  return `<div class="dph2${isOffDay(d) ? ' off' : ''}"><b>${+d.slice(8)}</b><span>${DOW_LONG[weekday(d)]}${hol ? ` · ${esc(hol)}` : ''}</span></div>`;
+}
+function renderAlt() {
+  const v = calView(), box = $('#altView');
+  if (v === 'week') {
+    const sel = S.selected || today();
+    const start = addDays(sel, -((weekday(sel) - (S.settings.mondayFirst ? 1 : 0) + 7) % 7));
+    let strip = '';
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(start, i);
+      strip += `<button class="${[d === sel ? 'sl' : '', d === today() ? 'td' : '', isOffDay(d) ? 'off' : ''].join(' ')}" data-sel="${d}"><small>${DOW[weekday(d)]}</small><b>${+d.slice(8)}</b></button>`;
+    }
+    box.innerHTML = `<div class="wk7">${strip}</div>${dayHead(sel)}<div class="dpanel">${dayContent(sel)}</div>`;
+  } else if (v === 'day') {
+    const d = S.selected || today();
+    box.innerHTML = `${dayHead(d)}<div class="dpanel">${dayContent(d)}</div>`;
+  } else if (v === 'agenda') {
+    const { y, m } = S.view, n = daysInMonth(y, m);
+    let html = '';
+    for (let i = 1; i <= n; i++) {
+      const d = iso(y, m, i); if (!dayList(dayData(d)).length) continue;
+      html += `<div class="agd">${d === today() ? '<span class="hj">Hoje</span>' : ''}<b class="${isOffDay(d) ? 'off' : ''}">${DOW[weekday(d)].toLowerCase()} ${i} ${MONTH_SHORT(m)}.</b></div><div class="dpanel">${dayContent(d, true)}</div>`;
+    }
+    box.innerHTML = html || '<div class="empty">Nenhum lançamento neste mês.</div>';
+  } else if (v === 'year') {
+    const y = S.view.y, t = today();
+    let html = '';
+    for (let m = 1; m <= 12; m++) {
+      const mo = S.calc.computeMonth(y, m), lead = (weekday(iso(y, m, 1)) - (S.settings.mondayFirst ? 1 : 0) + 7) % 7;
+      const order = S.settings.mondayFirst ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
+      let g = order.map(w => `<i class="w">${WEEKDAYS_SHORT[w]}</i>`).join('') + '<i></i>'.repeat(lead);
+      mo.days.forEach((day, k) => {
+        const d = iso(y, m, k + 1), val = cellValue(day);
+        g += `<i class="${[isOffDay(d) ? 'off' : '', d === t ? 'ut' : '', val !== null && val < 0 ? 'ng' : ''].join(' ')}">${k + 1}</i>`;
+      });
+      html += `<button class="ym${y === +t.slice(0, 4) && m === +t.slice(5, 7) ? ' cur' : ''}" data-month="${m}"><b>${MONTH_SHORT(m)}.</b><div class="yg">${g}</div></button>`;
+    }
+    box.innerHTML = `<div class="yr">${html}</div><p class="yr-note"><i></i>dias com saldo negativo</p>`;
+  }
+}
+function onAltClick(e) {
+  const run = e.target.closest('[data-run]');
+  if (run) { const it = findItem(run.dataset.key, run.dataset.date); if (it) runAction(run.dataset.run, it); return; }
+  const row = e.target.closest('.ldr[data-key]');
+  if (row) { openActions(row.dataset.key, row.dataset.date); return; }
+  const rv = e.target.closest('[data-reveal-alt]');
+  if (rv) { S.dayReveal = rv.dataset.revealAlt; renderAlt(); return; }
+  const sl = e.target.closest('[data-sel]');
+  if (sl) { S.selected = sl.dataset.sel; S.view = { y: +S.selected.slice(0, 4), m: +S.selected.slice(5, 7) }; renderHeader(); renderGrid(); return; }
+  const mb = e.target.closest('[data-month]');
+  if (mb) { S.view = { y: S.view.y, m: +mb.dataset.month }; S.settings.calView = 'month'; saveSettings(); renderHeader(); renderGrid(); window.scrollTo(0, 0); }
+}
+/** Deslizar para os lados também troca o dia/semana/ano nessas visualizações. */
+function bindAltSwipe() {
+  const box = $('#altView'); let sx = 0, sy = 0;
+  box.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  box.addEventListener('touchend', e => {
+    const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) goMonth(dx < 0 ? 1 : -1);
+  }, { passive: true });
 }
 
 function refresh() {
@@ -1696,15 +1826,27 @@ function bind() {
   const openMenu = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
   $('#btnMenu').onclick = openMenu;
   bindEdge(() => { if (!isOpen($('#drawer'))) openMenu(); });
-  $('#btnView').onclick = () => setExpanded(!S.settings.calExpanded);
+  $('#swExpand').addEventListener('change', e => setExpanded(e.target.checked));
   syncViewBtn();
+  // botão do topo: escolher a visualização (Dia, Semana, Mês, Ano)
+  $('#btnView').onclick = () => {
+    $$('#viewPop [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === calView()));
+    openLayer($('#viewPop'));
+  };
+  $('#viewPop').addEventListener('click', async e => {
+    const b = e.target.closest('[data-view]'); if (!b) return;
+    await closeTop();
+    setView(b.dataset.view);
+  });
+  $('#altView').addEventListener('click', onAltClick);
+  bindAltSwipe();
   $('#btnPrev').onclick = () => goMonth(-1);
   $('#btnNext').onclick = () => goMonth(1);
   $('#btnToday').onclick = goToday;
   $('#scrim').onclick = () => closeTop();
   $$('[data-close]').forEach(b => { b.onclick = () => closeTop(); });
   $('#btnNewTop').onclick = () => openForm({ date: S.selected || today() });
-  $('#fab').onclick = () => openForm({ date: today() });
+  $('#fab').onclick = () => openForm({ date: (calView() === 'day' || calView() === 'week') && S.selected ? S.selected : today() });
   // (resumo do dinheiro sempre aberto — v1.9.8)
 
   // Grade: toque abre o dia; deslizar troca o mês; toque longo inicia a seleção; arrastar seleciona vários

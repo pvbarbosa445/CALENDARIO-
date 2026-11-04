@@ -916,3 +916,135 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
   .money .mb-next small, .money .mb-next b { display: inline; }
   .money .mb-next b { margin-left: 6px; font-size: 15px; }
 }
+
+/* =================== v1.9.9 — visualizações Dia / Semana / Mês / Ano =================== */
+.view-btn { color: var(--text-2); }
+@media (min-width: 1100px) { .view-btn { display: inline-grid; } }
+#rowExpand { display: flex; }
+@media (min-width: 1100px) { #rowExpand { display: none; } }
+/* janelinha de escolha, logo abaixo do botão */
+.view-pop { position: fixed; z-index: 36; top: calc(54px + var(--top)); right: 12px; min-width: 190px; padding: 6px; border-radius: 16px;
+  background: #1E1E1E; box-shadow: 0 10px 30px rgba(0, 0, 0, .55), inset 0 0 0 1px #2E2E2E;
+  opacity: 0; transform: translateY(-6px) scale(.98); transform-origin: top right; pointer-events: none; transition: opacity .14s, transform .14s var(--ease); }
+.view-pop.on { opacity: 1; transform: none; pointer-events: auto; }
+.view-pop button { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 14px; border-radius: 11px; font-size: 16px; color: var(--text); }
+.view-pop button:active, .view-pop button:hover { background: #2A2A2A; }
+.view-pop button i { width: 8px; height: 8px; border-radius: 50%; }
+.view-pop button.on { color: var(--accent); font-weight: 600; }
+.view-pop button.on i { background: var(--accent); }
+@media (min-width: 1100px) { .view-pop { top: 64px; right: calc(var(--dock) + 40px); } }
+
+/* nas outras visualizações a grade do mês fica escondida */
+body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
+.alt-view { padding: 4px 8px 0; }
+.av-date { display: flex; flex-direction: column; align-items: center; width: 44px; flex: none; line-height: 1.1; }
+.av-date small { font-size: 11px; font-weight: 600; color: var(--text-2); letter-spacing: .4px; }
+.av-date b { font-size: 20px; font-weight: 600; color: #FFFFFF; margin-top: 2px; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; }
+.wkend .av-date b, .hol .av-date b { color: var(--accent); }
+.today .av-date b { background: #FFFFFF; color: #000000; }
+/* Semana: um quadrado por dia, com as etiquetas e o saldo */
+.av-week { display: flex; flex-direction: column; gap: 4px; }
+.av-day { display: flex; align-items: flex-start; gap: 10px; width: 100%; min-height: 68px; padding: 10px 12px 10px 6px; border-radius: 8px; background: var(--cell); text-align: left; }
+.av-day.sel { box-shadow: inset 0 0 0 1.5px var(--sel-line); }
+.av-list { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 5px; padding-top: 2px; }
+.av-bal { flex: none; align-self: flex-end; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.av-bal.zero { color: var(--text-3); }
+.av-item { position: relative; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 24px; padding: 0 8px 0 9px; border-radius: 5px; font-size: 13px; color: #FFFFFF;
+  background: rgba(255, 255, 255, .06); background: color-mix(in srgb, var(--c, #52B7D3) 17%, #060606); }
+.av-item i { position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 2px; background: var(--c, #52B7D3); }
+.av-item b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av-item em { font-style: normal; font-weight: 600; color: rgba(255, 255, 255, .78); font-variant-numeric: tabular-nums; flex: none; }
+.av-item.done { opacity: .5; }
+.av-more { font-size: 12px; color: var(--text-2); align-self: center; }
+.av-hol { font-size: 12px; color: var(--accent); align-self: center; }
+/* Dia: o dia em destaque, os lançamentos em lista e o saldo */
+.av-dayview { background: var(--cell); border-radius: 10px; padding: 14px 12px 12px; }
+.av-dhead { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.av-date.big b { font-size: 26px; width: 44px; height: 44px; border-radius: 11px; }
+.av-dinfo { display: flex; flex-direction: column; color: var(--text-2); font-size: 13px; }
+.av-dinfo small { margin-top: 6px; font-size: 12px; }
+.av-dinfo b { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.av-dlist { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; }
+.av-dlist .av-item { height: 40px; font-size: 15px; padding: 0 12px 0 14px; justify-content: space-between; border-radius: 7px; cursor: pointer; }
+.av-dlist .av-item i { width: 4px; }
+.av-dlist .av-item em { font-size: 15px; }
+.av-add { width: 100%; }
+/* Ano: os 12 meses, com o resultado e o saldo no fim de cada um */
+.av-year { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.av-month { display: flex; flex-direction: column; gap: 3px; padding: 12px 10px; border-radius: 9px; background: var(--cell); text-align: left; min-height: 104px; }
+.av-month b { font-size: 15px; color: #FFFFFF; }
+.av-month.cur { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.av-mres { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.av-month small { font-size: 11px; color: var(--text-2); line-height: 1.3; }
+@media (min-width: 1100px) {
+  .alt-view { padding: 4px 0 0; }
+  .av-year { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .av-month { min-height: 130px; padding: 16px 14px; }
+  .av-day { min-height: 76px; }
+}
+.av-month.empty b { color: var(--text-2); }
+.av-month.empty .av-mres { color: var(--text-3); }
+
+/* =================== v2.0 — visualizações como no app antigo (Ano · Mês · Semana · Dia · Agenda) =================== */
+.vp-title { padding: 8px 14px 6px; font-size: 12px; font-weight: 600; color: var(--text-2); letter-spacing: .3px; }
+.view-pop button i { width: auto; height: auto; background: none !important; font-style: normal; font-weight: 700; color: var(--accent); visibility: hidden; }
+.view-pop button.on i { visibility: visible; }
+.alt-view { padding: 4px 10px 0; }
+/* Semana: faixa com os 7 dias */
+.wk7 { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 5px; margin: 2px 0 12px; }
+.wk7 button { background: var(--cell); border-radius: 10px; padding: 7px 0 8px; color: #FFFFFF; box-shadow: inset 0 0 0 1.5px transparent; }
+.wk7 button small { display: block; font-size: 10px; font-weight: 700; color: var(--text-2); margin-bottom: 3px; letter-spacing: .3px; }
+.wk7 button b { font-size: 17px; font-weight: 600; }
+.wk7 button.off b, .wk7 button.off small { color: var(--accent); }
+.wk7 button.td b { background: #FFFFFF; color: #000000; border-radius: 7px; padding: 0 6px; }
+.wk7 button.sl { box-shadow: inset 0 0 0 1.5px var(--sel-line); background: #1C1C1C; }
+/* cabeçalho do dia: número grande + dia da semana */
+.dph2 { display: flex; align-items: baseline; gap: 10px; margin: 2px 4px 12px; }
+.dph2 b { font-size: 34px; font-weight: 800; letter-spacing: -1px; color: #FFFFFF; }
+.dph2 span { font-size: 14px; font-weight: 700; letter-spacing: .3px; color: var(--text); }
+.dph2.off b, .dph2.off span { color: var(--accent); }
+/* conteúdo do dia */
+.dpanel { display: flex; flex-direction: column; gap: 8px; }
+.ldsum { display: flex; justify-content: space-between; align-items: center; background: #1B1B1D; border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; font-size: 13px; color: var(--text-2); }
+.ldsum b { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ldp { background: var(--cell); border-radius: 14px; padding: 2px 12px 10px; }
+.ldp.done { padding-bottom: 2px; opacity: .72; }
+.ldr { display: flex; align-items: center; gap: 10px; padding: 11px 2px; cursor: pointer; }
+.ldr .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--c); }
+.ldr .dot.dash { background: transparent; border: 2px dashed var(--c); width: 12px; height: 12px; }
+.ldn { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ldn b { font-size: 15px; font-weight: 600; color: #FFFFFF; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ldn small { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ldr > b { flex: none; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ldb { display: flex; gap: 6px; }
+.ldb .primary-btn.sm { flex: 1; min-height: 42px; padding: 8px 4px; font-size: 13.5px; border-radius: 12px; }
+.dpanel .reveal { margin-top: 0; border-top: 0; }
+/* Agenda */
+.agd { display: flex; align-items: center; gap: 8px; margin: 14px 4px 6px; font-size: 14px; }
+.agd b { color: #FFFFFF; font-weight: 700; }
+.agd b.off { color: var(--accent); }
+.agd .hj { background: #FFFFFF; color: #000000; border-radius: 6px; padding: 1px 8px; font-weight: 700; font-size: 13px; }
+.agd:first-child { margin-top: 4px; }
+/* Ano: 12 mini calendários */
+.yr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 10px; margin-top: 6px; }
+.ym { display: block; text-align: center; }
+.ym > b { display: inline-block; margin: 0 auto 6px; font-size: 15px; font-weight: 600; padding: 1px 8px; border-radius: 7px; color: #FFFFFF; }
+.ym.cur > b { background: #FFFFFF; color: #000000; }
+.yg { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.yg i { font-style: normal; font-size: 9px; font-weight: 600; text-align: center; border-radius: 4px; background: #1C1C1E; padding: 2px 0; line-height: 1.25; min-height: 15px; color: #E6E6E6; }
+.yg i:empty { background: none; }
+.yg i.w { background: none; color: var(--text-2); }
+.yg i.off { color: var(--accent); }
+.yg i.ng { background: rgba(228, 119, 119, .28); }
+.yg i.ut { background: #FFFFFF; color: #000000; }
+.yr-note { display: flex; align-items: center; gap: 6px; justify-content: center; margin: 12px 0 0; font-size: 12px; color: var(--text-2); }
+.yr-note i { width: 12px; height: 10px; border-radius: 3px; background: rgba(228, 119, 119, .28); }
+@media (min-width: 1100px) {
+  .alt-view { padding: 4px 0 0; }
+  .yr { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 22px 18px; }
+  .yg i { font-size: 11px; min-height: 19px; }
+  .wk7 button { padding: 10px 0; }
+}
+.yr { align-items: start; }
+.ym { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; }
+.ym > b { align-self: center; }
