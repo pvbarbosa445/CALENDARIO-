@@ -1,7 +1,7 @@
 // Service Worker: mantém os arquivos do app disponíveis offline.
 // Ele NUNCA toca no IndexedDB — atualizar o código não apaga os dados do aparelho.
 // Ao publicar uma nova versão no GitHub, aumente VERSION para forçar a atualização do cache.
-const VERSION = '1.9.5';
+const VERSION = '1.9.6';
 const CACHE = `fincal-${VERSION}`;
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './app.css',
@@ -9,8 +9,12 @@ const ASSETS = [
   './icon-192.png', './icon-512.png', './icon-maskable-512.png',
 ];
 
+// Instala a versão inteira de uma vez, buscando cada arquivo direto do servidor (cache: 'reload'),
+// para nunca misturar arquivos novos com cópias antigas guardadas pelo navegador ou pelo GitHub.
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -21,17 +25,14 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Cache primeiro (abre instantâneo e offline) + atualização em segundo plano.
+// Cache primeiro (abre instantâneo e offline). Os arquivos de uma versão nunca são trocados um a um:
+// a versão nova chega inteira quando o VERSION muda (novo Service Worker).
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(caches.open(CACHE).then(async cache => {
     const cached = await cache.match(req, { ignoreSearch: true }) ||
       (req.mode === 'navigate' ? await cache.match('./index.html') : undefined);
-    const network = fetch(req).then(res => {
-      if (res && res.ok && res.type === 'basic') cache.put(req, res.clone());
-      return res;
-    }).catch(() => cached);
-    return cached || network;
+    return cached || fetch(req);
   }));
 });

@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.5';
+export const APP_VERSION = '1.9.6';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -346,7 +346,16 @@ function setExpanded(open) {
   applyCellHeight(isExpanded() ? CAL.expanded : CAL.compact);
   $('#calHandle').classList.toggle('up', isExpanded());
   $('#calHandle').setAttribute('aria-label', isExpanded() ? 'Recolher o calendário' : 'Expandir o calendário');
+  syncViewBtn();
   if (S.calc) renderGrid();
+}
+/** Botão do topo que liga/desliga a visualização dos lançamentos nos dias (calendário expandido x recolhido). */
+function syncViewBtn() {
+  const b = $('#btnView'); if (!b) return;
+  const on = isExpanded();
+  b.classList.toggle('on', on);
+  b.setAttribute('aria-pressed', String(on));
+  b.setAttribute('aria-label', on ? 'Esconder os lançamentos dos dias' : 'Mostrar os lançamentos nos dias');
 }
 window.addEventListener('resize', () => { clearTimeout(measureCal.t); measureCal.t = setTimeout(() => { measureCal(); if (S.calc) renderGrid(); }, 120); });
 
@@ -1502,7 +1511,14 @@ function placeEdge() {
  * tocar abre; arrastar para cima/baixo muda a altura da alça.
  */
 function bindEdge(open) {
-  const h = $('#edgeHandle'); if (!h) return;
+  let h = $('#edgeHandle');
+  if (!h) {
+    h = document.createElement('div');
+    h.className = 'edge-handle'; h.id = 'edgeHandle'; h.setAttribute('role', 'button'); h.setAttribute('aria-label', 'Abrir menu'); h.tabIndex = 0;
+    h.innerHTML = '<i></i>';
+    document.body.appendChild(h);
+  }
+  document.body.classList.add('edge-on');
   const drawer = $('#drawer');
   let st = null, skipClick = false; // o "click" que vem do mesmo gesto de um arraste é ignorado
   const reset = () => { drawer.style.transition = ''; drawer.style.transform = ''; drawer.classList.remove('peek'); };
@@ -1644,6 +1660,8 @@ function bind() {
   const openMenu = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
   $('#btnMenu').onclick = openMenu;
   bindEdge(() => { if (!isOpen($('#drawer'))) openMenu(); });
+  $('#btnView').onclick = () => setExpanded(!S.settings.calExpanded);
+  syncViewBtn();
   $('#btnPrev').onclick = () => goMonth(-1);
   $('#btnNext').onclick = () => goMonth(1);
   $('#btnToday').onclick = goToday;

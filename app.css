@@ -872,3 +872,17 @@ body.selecting .fab-menu { opacity: 0; pointer-events: none; }
   /* menu puxado pelo dedo: aparece por cima, sem esperar a animação */
   .drawer.peek { visibility: visible; }
 }
+
+/* =================== v1.9.6 — sem "puxar para atualizar", botão de etiquetas, alça garantida =================== */
+/* arrastar o calendário para baixo não recarrega mais a página (o navegador não faz "puxar para atualizar") */
+html, body { overscroll-behavior: none; overscroll-behavior-y: none; }
+/* o ⋮ do topo só some quando a alça da borda existe de fato */
+@media (max-width: 1099px) {
+  #btnMenu { display: inline-grid; }
+  body.edge-on #btnMenu { display: none; }
+  .edge-handle { z-index: 25; }
+}
+/* botão de mostrar/esconder os lançamentos nos dias (celular) */
+.view-btn { color: var(--text-2); }
+.view-btn.on { color: var(--accent); }
+@media (min-width: 1100px) { .view-btn { display: none; } }

@@ -20,6 +20,7 @@ const P = {
   target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".8" fill="currentColor"/>',
   chart: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   history: '<path d="M4 12a8 8 0 108-8 8 8 0 00-6.6 3.5"/><path d="M4 4v4h4M12 8v4l3 2"/>',
+  rows: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9.5h8M8 13h8M8 16.5h5"/>',
   bell: '<path d="M6 16V11a6 6 0 0112 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 004 0"/>',
   transfer: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
   download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
