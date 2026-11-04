@@ -886,3 +886,5 @@ html, body { overscroll-behavior: none; overscroll-behavior-y: none; }
 .view-btn { color: var(--text-2); }
 .view-btn.on { color: var(--accent); }
 @media (min-width: 1100px) { .view-btn { display: none; } }
+/* v1.9.7 — sem gesto de arrastar para expandir: o botão do topo liga/desliga os lançamentos nos dias */
+#calHandle { display: none !important; }

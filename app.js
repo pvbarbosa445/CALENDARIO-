@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.6';
+export const APP_VERSION = '1.9.7';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -1712,11 +1712,7 @@ function bind() {
       return;
     }
     if (S.selecting || isWide()) return;
-    if (!vdrag && Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.3 && window.scrollY <= 0 &&
-        ((dy > 0 && !S.settings.calExpanded) || (dy < 0 && S.settings.calExpanded))) {
-      vdrag = { h0: startH(), h: startH(), y0: sy, t0: e.timeStamp, rendered: false };
-      document.body.classList.add('cal-dragging');
-    }
+    // (v1.9.7) arrastar para cima/baixo não expande mais o calendário: isso fica no botão do topo
     if (vdrag) { e.preventDefault(); dragTo(dy); }
   }, { passive: false });
   // fim do toque ouvido na janela: mesmo que o dedo saia da grade, o gesto termina corretamente
@@ -1728,7 +1724,7 @@ function bind() {
     const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) { swiped = true; goMonth(dx < 0 ? 1 : -1); }
   }, { passive: true });
-  // alça: toque alterna, arraste funciona igual à grade
+  // alça de baixo do calendário: retirada na v1.9.7 (o botão do topo faz isso); o elemento fica oculto
   const handle = $('#calHandle');
   handle.addEventListener('click', () => { if (!handle.dataset.dragged) setExpanded(!S.settings.calExpanded); delete handle.dataset.dragged; });
   handle.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(!S.settings.calExpanded); } });
