@@ -856,3 +856,19 @@ body.selecting .fab-menu { opacity: 0; pointer-events: none; }
   .drawer.on { transform: none; }
 }
 @media (min-width: 1100px) { .fab-menu { display: none; } }
+
+/* =================== v1.9.5 — alça do menu na borda direita (painel Edge do Samsung) =================== */
+.fab-menu { display: none !important; }
+.edge-handle { display: none; }
+@media (max-width: 1099px) {
+  .edge-handle {
+    display: block; position: fixed; right: 0; top: 42%; z-index: 7; width: 22px; height: 88px;
+    touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab;
+  }
+  /* a alça visível: fininha, cinza bem clarinho, encostada na borda */
+  .edge-handle i { position: absolute; right: 3px; top: 6px; bottom: 6px; width: 5px; border-radius: 3px; background: rgba(220, 220, 225, .38); transition: background .15s, width .15s; }
+  .edge-handle:active i { background: rgba(235, 235, 240, .6); width: 6px; }
+  body.selecting .edge-handle { opacity: 0; pointer-events: none; }
+  /* menu puxado pelo dedo: aparece por cima, sem esperar a animação */
+  .drawer.peek { visibility: visible; }
+}

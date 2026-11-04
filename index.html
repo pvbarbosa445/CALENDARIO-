@@ -43,8 +43,9 @@
   </main>
 
   <button class="fab" id="fab" aria-label="Novo lançamento" data-icon="plus"></button>
-  <!-- botão do menu flutuante (celular): fica acima do +, dá para arrastar; abre a aba pela direita -->
-  <button class="fab fab-menu" id="fabMenu" aria-label="Menu" data-icon="dots"></button>
+  <!-- alça do menu na borda direita (celular), como o painel Edge do Samsung: arraste para a esquerda (ou toque) para abrir;
+       arraste para cima/baixo para mudar a altura -->
+  <div class="edge-handle" id="edgeHandle" role="button" aria-label="Abrir menu" tabindex="0"><i></i></div>
   <div class="sel-bar" id="selBar"><button class="primary-btn" id="btnSelGo" disabled>Continuar</button></div>
 
   <div class="scrim" id="scrim"></div>

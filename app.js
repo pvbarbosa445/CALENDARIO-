@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.4';
+export const APP_VERSION = '1.9.5';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -48,7 +48,7 @@ const DEFAULTS = {
   showTransfers: true, hiddenAccounts: [], activeAccount: null, defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
-  summaryOpen: false, calExpanded: false, menuPos: null,
+  summaryOpen: false, calExpanded: false, edgeY: null,
 };
 const S = {
   entries: new Map(), overrides: new Map(), checks: new Map(), tags: new Map(),
@@ -1489,50 +1489,63 @@ function renderTagList() {
     : '<div class="row"><span class="muted">Nenhuma tag</span></div>';
 }
 
-// ---------- Botão do menu flutuante (uso com uma mão só) ----------
-/** Coloca o botão na posição guardada (ou logo acima do +), sempre dentro da tela. */
-function placeMenuFab() {
-  const b = $('#fabMenu'); if (!b) return;
-  const p = S.settings.menuPos;
-  if (!p || isWide()) { b.style.left = b.style.top = ''; b.classList.remove('moved'); return; }
-  const w = b.offsetWidth || 46, h = b.offsetHeight || 46;
-  const x = Math.min(window.innerWidth - w - 6, Math.max(6, p.x * window.innerWidth));
-  const y = Math.min(window.innerHeight - h - 6, Math.max(6, p.y * window.innerHeight));
-  b.style.left = x + 'px'; b.style.top = y + 'px'; b.classList.add('moved');
+// ---------- Alça do menu na borda direita (como o painel Edge do Samsung) ----------
+/** Coloca a alça na altura guardada (padrão: um pouco acima do meio da tela). */
+function placeEdge() {
+  const h = $('#edgeHandle'); if (!h) return;
+  const y = S.settings.edgeY ?? 0.42;
+  const hh = h.offsetHeight || 88;
+  h.style.top = Math.min(window.innerHeight - hh - 8, Math.max(8, y * window.innerHeight)) + 'px';
 }
-/** Toque abre o menu; segurar e arrastar move o botão (a posição fica guardada). */
-function bindMenuFab(open) {
-  const b = $('#fabMenu'); if (!b) return;
-  let st = null;
-  b.addEventListener('pointerdown', e => {
-    const r = b.getBoundingClientRect();
-    st = { x: e.clientX, y: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
-    try { b.setPointerCapture(e.pointerId); } catch (_) { /* toque simulado */ }
+/**
+ * Arrastar a alça para a esquerda puxa o menu da direita acompanhando o dedo (soltou depois de 1/4 → abre);
+ * tocar abre; arrastar para cima/baixo muda a altura da alça.
+ */
+function bindEdge(open) {
+  const h = $('#edgeHandle'); if (!h) return;
+  const drawer = $('#drawer');
+  let st = null, skipClick = false; // o "click" que vem do mesmo gesto de um arraste é ignorado
+  const reset = () => { drawer.style.transition = ''; drawer.style.transform = ''; drawer.classList.remove('peek'); };
+  h.addEventListener('pointerdown', e => {
+    skipClick = false;
+    if (isOpen(drawer)) return;
+    st = { x: e.clientX, y: e.clientY, top: h.offsetTop, mode: null, t: Date.now() };
+    try { h.setPointerCapture(e.pointerId); } catch (_) { /* toque simulado */ }
   });
-  b.addEventListener('pointermove', e => {
+  h.addEventListener('pointermove', e => {
     if (!st) return;
-    if (!st.moved && Math.hypot(e.clientX - st.x, e.clientY - st.y) < 8) return;
-    st.moved = true;
-    b.classList.add('moved', 'dragging');
-    const w = b.offsetWidth, h = b.offsetHeight;
-    b.style.left = Math.min(window.innerWidth - w - 6, Math.max(6, e.clientX - st.dx)) + 'px';
-    b.style.top = Math.min(window.innerHeight - h - 6, Math.max(6, e.clientY - st.dy)) + 'px';
+    const dx = st.x - e.clientX, dy = e.clientY - st.y;
+    if (!st.mode) {
+      if (Math.hypot(dx, dy) < 8) return;
+      st.mode = Math.abs(dx) >= Math.abs(dy) ? 'open' : 'move';
+      if (st.mode === 'open') { syncDrawer(); drawer.classList.add('peek'); drawer.style.transition = 'none'; }
+    }
+    if (st.mode === 'open') {
+      const w = drawer.offsetWidth;
+      drawer.style.transform = `translateX(${Math.max(0, w - Math.max(0, dx))}px)`;
+    } else {
+      const hh = h.offsetHeight;
+      h.style.top = Math.min(window.innerHeight - hh - 8, Math.max(8, st.top + dy)) + 'px';
+    }
   });
   const end = e => {
     if (!st) return;
-    const moved = st.moved; st = null;
-    b.classList.remove('dragging');
-    if (moved) {
-      const r = b.getBoundingClientRect();
-      S.settings.menuPos = { x: r.left / window.innerWidth, y: r.top / window.innerHeight };
-      saveSettings();
-    } else if (e.type === 'pointerup') open();
+    const s0 = st; st = null;
+    // toque: o menu abre no "click" (depois do toque terminar), senão o clique-fantasma do toque cai em cima do menu recém-aberto
+    if (!s0.mode) return;
+    skipClick = true;
+    if (s0.mode === 'move') { S.settings.edgeY = h.offsetTop / window.innerHeight; saveSettings(); return; }
+    const dx = s0.x - e.clientX, fast = dx > 30 && Date.now() - s0.t < 250;
+    const go = e.type === 'pointerup' && (dx > drawer.offsetWidth * 0.25 || fast);
+    drawer.style.transition = '';
+    if (go) { reset(); open(); } else { drawer.style.transform = ''; setTimeout(reset, 260); }
   };
-  b.addEventListener('pointerup', end);
-  b.addEventListener('pointercancel', end);
-  b.addEventListener('click', e => e.preventDefault());
-  window.addEventListener('resize', placeMenuFab);
-  placeMenuFab();
+  h.addEventListener('pointerup', end);
+  h.addEventListener('pointercancel', end);
+  h.addEventListener('click', () => { if (skipClick) { skipClick = false; return; } open(); });
+  h.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+  window.addEventListener('resize', placeEdge);
+  placeEdge();
 }
 
 // ---------- Menu lateral ----------
@@ -1630,7 +1643,7 @@ function bind() {
   $('#btnSettings').onclick = async () => { await closeAll(); syncDrawer(); storageInfo(); openLayer($('#settingsSheet')); };
   const openMenu = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
   $('#btnMenu').onclick = openMenu;
-  bindMenuFab(openMenu);
+  bindEdge(() => { if (!isOpen($('#drawer'))) openMenu(); });
   $('#btnPrev').onclick = () => goMonth(-1);
   $('#btnNext').onclick = () => goMonth(1);
   $('#btnToday').onclick = goToday;
