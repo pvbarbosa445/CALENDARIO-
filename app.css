@@ -1087,3 +1087,48 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
   .money .mb-bal b { font-size: 24px; }
   .money .mb-next b, .money .mb-row b { font-size: 17px; }
 }
+
+/* =================== v2.0.2 — PC: menu fixo à esquerda e painel do dia na altura do calendário =================== */
+@media (min-width: 1100px) {
+  :root {
+    --side: 228px;                                       /* menu lateral sempre aberto */
+    --off: 24px;                                         /* respiro entre as colunas e as bordas */
+    --deskW: calc(100vw - var(--side) - var(--off) * 2);
+    --dock: clamp(280px, calc(var(--deskW) * .24), 400px);
+    --calW: calc(var(--deskW) - var(--dock) - var(--gap));
+  }
+  /* o menu vira uma coluna fixa, sem precisar tocar no ⋮ */
+  .drawer, .drawer.on {
+    left: 0; right: auto; width: var(--side); transform: none !important; transition: none;
+    border-radius: 0; border-right: 1px solid #1E1E1E; background: #0A0A0A; z-index: 5; padding-top: 10px;
+  }
+  .drawer-head { padding: 8px 8px 8px 18px; border-bottom: 0; margin-bottom: 2px; }
+  .drawer-head > span:first-child { font-size: 15px; font-weight: 600; color: var(--text-2); }
+  .drawer .group { background: transparent; }
+  .drawer .nav .row { border-radius: 10px; }
+  .drawer .nav .row:hover { background: #1A1A1A; }
+  .drawer-body { padding: 0 10px 24px; }
+  #btnMenu { display: none !important; }
+  .edge-handle { display: none !important; }
+  /* calendário entre o menu e o painel do dia */
+  .topbar, main, body.day-open .topbar, body.day-open main { margin-left: calc(var(--side) + var(--off)); width: var(--calW); }
+  .toast, body.day-open .toast { left: calc(var(--side) + var(--off)); }
+  .sel-bar, body.day-open .sel-bar { left: calc(var(--side) + var(--off)); }
+  /* painel do dia: do topo do resumo até o fim do calendário */
+  #daySheet.docked, #daySheet.docked.on {
+    right: var(--off); top: var(--dockTop, 74px); bottom: auto; height: var(--dockH, auto); max-height: none;
+    display: flex; flex-direction: column; border-radius: 16px; border-color: #1E1E1E; background: #141414;
+  }
+  #daySheet.docked .sheet-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .view-pop { right: calc(var(--off) + var(--dock) + var(--gap) + 16px); }
+}
+@media (min-width: 1100px) {
+  /* troca de conta no menu: uma conta por linha, sem cortar o nome */
+  .drawer .acc-seg { display: flex; flex-direction: column; gap: 2px; padding: 4px; margin: 14px 0 4px; border-radius: 12px; }
+  .drawer .acc-seg button { text-align: left; padding: 9px 12px; border-radius: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+/* notebooks menores: menu e painel um pouco mais estreitos para o calendário respirar */
+@media (min-width: 1100px) and (max-width: 1399px) {
+  :root { --side: 204px; --dock: clamp(250px, calc(var(--deskW) * .24), 300px); --off: 18px; --gap: 18px; }
+  .drawer .nav .row b { font-size: 12px; }
+}

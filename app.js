@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.0.1';
+export const APP_VERSION = '2.0.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -290,6 +290,7 @@ const isWide = () => wideMQ.matches;
 const dayVisible = () => (isWide() ? !!S.dayOpen : isOpen($('#daySheet')));
 function applyLayout() {
   document.body.classList.toggle('wide', isWide());
+  if (isWide() && S.calc) { syncDrawer(); storageInfo(); }
   const ds = $('#daySheet');
   if (isWide()) {
     if (isOpen(ds)) { const i = layers.findIndex(l => l.el === ds); if (i >= 0) layers.splice(i, 1); updateScrim(); S.dayOpen = true; }
@@ -329,7 +330,7 @@ function measureCal() {
   const fill = Math.floor((vh - top - reserve - gap * (CAL.rows - 1)) / CAL.rows);
   CAL.compact = Math.max(46, Math.min(92, Math.floor((vh - 240) / 6)));
   // PC: dias com altura máxima confortável (e o mês inteiro cabendo na tela); celular: expandido preenche a tela
-  CAL.expanded = isWide() ? Math.max(84, Math.min(fill, 150)) : Math.max(CAL.compact + 24, fill);
+  CAL.expanded = isWide() ? Math.max(84, Math.min(fill, 200)) : Math.max(CAL.compact + 24, fill);
   // quantas linhas de lançamento cabem no dia expandido (o conteúdo é montado uma vez só)
   const lineH = isWide() ? 18 : window.innerWidth < 600 ? 27 : 18; // etiqueta + fresta (celular: etiqueta de 2 linhas)
   CAL.lines = Math.max(1, Math.floor((CAL.expanded - (isWide() ? 64 : 50)) / lineH));
@@ -535,7 +536,20 @@ function dayLines(day, max) {
  *    inclusive os gastos do dia em que ele cai;
  *  - Receitas e gastos previstos do mês exibido, e quanto vai sobrar no fim desse mês.
  */
+/** PC: o painel do dia começa no topo do resumo e termina no fim do calendário. */
+function placeDock() {
+  if (!isWide()) return;
+  requestAnimationFrame(() => {
+    const top = $('#summary').getBoundingClientRect().top;
+    const cal = document.body.classList.contains('alt-on') ? $('#altView') : $('#gridWrap');
+    const bottom = Math.min(cal.getBoundingClientRect().bottom, window.innerHeight - 16);
+    const st = document.documentElement.style;
+    st.setProperty('--dockTop', Math.max(8, Math.round(top)) + 'px');
+    st.setProperty('--dockH', Math.max(240, Math.round(bottom - Math.max(8, top))) + 'px');
+  });
+}
 function renderSummary() {
+  placeDock();
   const mo = S.month, t = mo.totals, last = mo.days[mo.days.length - 1], td = today();
   // saldo na conta (realizado), contas visíveis
   const bal = F.balances({ data: S.data, accounts: accountsList(true), today: td, planUpto: td });
@@ -729,6 +743,7 @@ function refresh() {
   if (dayVisible() && S.selected) renderDay(S.selected);
   if (isOpen($('#groupSheet'))) renderGroup();
   renderTagList();
+  if (isWide()) syncDrawer(); // PC: o menu fica sempre aberto, então acompanha as mudanças
   refreshDerived();
   pages.onChange();
 }
