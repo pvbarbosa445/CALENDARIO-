@@ -1343,3 +1343,7 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
 .donut svg .bm-hole { cursor: pointer; }
 .bm-row.sel { background: rgba(255,255,255,.06); border-radius: 10px; }
 .donut svg, .donut svg * { outline: none; -webkit-tap-highlight-color: transparent; }
+/* v2.6.5 — botão R$ / % da bolacha */
+.bv-tog { display: inline-flex; background: #1F1F22; border-radius: 999px; padding: 2px; margin-right: 2px; }
+.bv-tog button { min-width: 34px; height: 26px; padding: 0 9px; border-radius: 999px; font-size: 12.5px; font-weight: 700; color: var(--text-2); background: none; }
+.bv-tog button.on { background: #3A3A3F; color: var(--text); }

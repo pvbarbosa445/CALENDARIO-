@@ -10,7 +10,7 @@ import * as B from './budget.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.6.4';
+export const APP_VERSION = '2.6.6';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -1378,6 +1378,9 @@ async function saveForm(ev) {
   const kind = Fm.kind;
   const tf = kind !== 'transfer' ? readTagField() : { tagId: null, metaId: null };
   const tagId = tf.tagId, metaId = tf.metaId;
+  // toda movimentação nova pertence a uma Meta (a tag é opcional); só não exige quando a conta ainda não tem metas desse tipo
+  if (Fm.mode === 'new' && kind !== 'transfer' && !tagId && !metaId && !(!$('#fSplitBox').hidden && $('#fSplit').checked)
+    && [...$('#fTag').options].some(o => o.value.startsWith('meta:'))) { toast('Escolha a meta'); $('#fTag').focus(); return; }
   const title = $('#fTitle').value.trim();
   const pay = $('#fPaid').checked;
   const accountId = $('#fAccount').value || S.settings.defaultAccount;
@@ -1643,11 +1646,13 @@ async function tagDialog(t = null, kindHint = 'expense', metaHint = null) {
   const metaOpts = [...S.metas.values()].filter(m => !m.archived && (metaVisible(m) || m.id === curMeta)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   const actions = [{ label: 'Cancelar', value: null }];
   if (t) actions.push({ label: 'Excluir', value: 'delete', cls: 'danger' });
-  actions.push({ label: 'Salvar', cls: 'primary', validate: () => !!$('#tgName').value.trim() || (toast('Dê um nome à tag'), false), value: () => ({ name: $('#tgName').value.trim(), kind: $('#tgKind').value, color, metaId: $('#tgMeta').value }) });
+  // a tag sempre pertence a uma Meta (só fica sem meta se ainda não existe nenhuma, ou se já era assim)
+  const needMeta = metaOpts.length > 0 && !(t && !curMeta);
+  actions.push({ label: 'Salvar', cls: 'primary', validate: () => (!$('#tgName').value.trim() ? (toast('Dê um nome à tag'), false) : needMeta && !$('#tgMeta').value ? (toast('Escolha a meta da tag'), false) : true), value: () => ({ name: $('#tgName').value.trim(), kind: $('#tgKind').value, color, metaId: $('#tgMeta').value }) });
   const res = await dialog({
     title: t ? 'Editar tag' : 'Nova tag',
     html: `<input type="text" id="tgName" placeholder="Nome" maxlength="30" value="${esc(t ? t.name : '')}">
-      <select id="tgMeta" aria-label="Meta"><option value="">Sem meta</option>${metaOpts.map(m => `<option value="${m.id}" ${m.id === curMeta ? 'selected' : ''}>Meta: ${esc(m.name)}</option>`).join('')}</select>
+      <select id="tgMeta" aria-label="Meta"><option value="">${needMeta ? 'Escolha a meta' : 'Sem meta'}</option>${metaOpts.map(m => `<option value="${m.id}" ${m.id === curMeta ? 'selected' : ''}>Meta: ${esc(m.name)}</option>`).join('')}</select>
       <select id="tgKind"><option value="expense">Despesa</option><option value="income">Receita</option><option value="both">Receita e despesa</option></select>
       <div class="swatches" id="tgColors">${PALETTE.map(c => `<button type="button" style="background:${c}" data-c="${c}" class="${c === color ? 'on' : ''}"></button>`).join('')}</div>`,
     actions,
@@ -2234,7 +2239,7 @@ function ctx() {
     dialog, confirmDlg, closeTop, closeAll, openLayer, isOpen, toast, refresh, rebuild, saveSettings, commit, undoLast,
     ops, F, db, tag, tagColor, tagsSorted, accountsList, accName, itemTitle, itemColor, itemSign, amtCls, statusLabel,
     budgetCtx, openForm, openDay: d => { S.view = parse(d); renderHeader(); renderGrid(); openDay(d); }, renderHeader, renderGrid,
-    syncDrawer, ensureDefaultAccount, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, resolveMeta, accVisible, filtering, calView,
+    syncDrawer, ensureDefaultAccount, activeAccount, worldAccounts, DEFAULTS, PALETTE, distributeNow, findItem, finishCheck, metaVisible, scopedMeta, resolveMeta, accVisible, filtering, calView,
   };
 }
 

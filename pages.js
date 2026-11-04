@@ -924,7 +924,7 @@ function metasView() {
       const bctx = C.budgetCtx();
       const cards = k => all.filter(x => (x.kind || 'expense') === k).map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
       const exp = cards('expense'), inc = cards('income'), sav = all.filter(x => x.kind === 'saving').map(savingCard).join('');
-      return `<div class="donut-card bm-card"><div class="donut-head"><b>Por metas</b><span class="bm-head-r"><small>${MONTHS[m - 1].slice(0, 3).toLowerCase()}/${y}</small><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>
+      return `<div class="donut-card bm-card"><div class="donut-head"><b>Por metas</b><span class="bm-head-r">${bvBtn()}<button class="icon-btn sm" data-a="bcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>
           ${rendaBolacha(cfg, d, 'd', bolachaMetas())}</div>
         ${inc ? `<div class="section-label"><span>METAS DE RECEITAS</span></div>${inc}` : ''}
         ${(() => { const done = all.filter(x => x.kind === 'saving' && x.completedAt); return done.length ? `<div class="section-label"><span>CONCLUÍDAS</span></div>${done.map(savingCard).join('')}` : ''; })()}
@@ -944,7 +944,7 @@ function metasView() {
 // Cada segmento é uma Meta da conta exibida; nada é cadastrado aqui. A Conta 1 só vê as metas e a receita da Conta 1.
 const budgetCfg = () => B.budgetConfig(S().settings);
 function saveBudget(cfg) {
-  S().settings.budget = { showOnCalendar: cfg.showOnCalendar, showLegendValues: cfg.showLegendValues, deduction: cfg.deduction };
+  S().settings.budget = { showOnCalendar: cfg.showOnCalendar, showLegendValues: cfg.showLegendValues, deduction: cfg.deduction, view: cfg.view === 'pct' ? 'pct' : 'value', hideOn: cfg.hideOn || [] };
   C.saveSettings(); render(); C.refresh();
 }
 /** Cofrinho pelo id; 'treasury' = o Tesouro (conta própria). */
@@ -963,6 +963,10 @@ function budgetDist(from, to) {
 function rendaBolacha(cfg, d, act = 'd', metas = []) {
   const { money, esc } = C;
   const base = d.base.planned;
+  // R$ ou %: um OU outro (botão no topo do cartão). Em % tudo é "da receita".
+  const pctMode = cfg.view === 'pct';
+  const pc = v => { const p = base ? Math.round(v / base * 1000) / 10 : 0; return `${String(p).replace('.', ',')}%`; };
+  const fmt = v => (pctMode ? pc(v) : money(v));
   const segs = d.segs.map(s => ({ id: s.meta.id, col: s.meta.color || '#8cb6e4', size: Math.max(s.target, s.realized), strong: Math.min(s.realized, Math.max(s.target, s.realized)), over: s.kind === 'expense' ? s.over : 0 }));
   if (d.other.planned > 0) segs.push({ col: '#8E8E93', size: d.other.planned, strong: d.other.realized, over: 0 });
   // o que sobra da receita depois das metas fica em VERDE (economia). Gastar além da meta "come" o verde.
@@ -978,11 +982,10 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
   const circ = (col, dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="28" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
   // tocar num pedaço mostra no centro qual é a Meta (como no app antigo); tocar de novo ou no centro volta à receita
   const segInfo = x => {
-    if (x.free) return { n: 'Economia', v: money(saveNow), t: `de ${money(saveLeft)} · ${String(Math.round(saveLeft / (base || 1) * 1000) / 10).replace('.', ',')}% da receita`, id: 'eco' };
+    if (x.free) return { n: 'Economia', v: fmt(saveNow), t: `de ${fmt(saveLeft)}`, id: 'eco' };
     const s = x.id ? d.segs.find(k => k.meta.id === x.id) : null;
     const real = Math.max(0, x.strong), tgt = s ? s.target : d.other.planned;
-    const share = base ? String(Math.round(tgt / base * 1000) / 10).replace('.', ',') : 0;
-    return { n: s ? s.meta.name : 'Fora das metas', v: money(real), t: tgt ? `de ${money(tgt)} · ${share}% da receita` : '', id: x.id || 'other' };
+    return { n: s ? s.meta.name : 'Fora das metas', v: fmt(real), t: tgt ? `de ${fmt(tgt)}` : '', id: x.id || 'other' };
   };
   for (const x of segs) {
     if (!(x.size > 0)) continue;
@@ -1002,26 +1005,26 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
   const rows = list.map(m => {
     const s = segOf.get(m.id), col = m.color || '#8cb6e4';
     const target = s ? s.target : 0, real = s ? Math.max(0, s.realized) : 0, save = m.kind === 'saving';
-    const pctUsed = target ? Math.round(real / target * 100) : 0, share = base && target ? Math.round(target / base * 1000) / 10 : 0;
-    const restTxt = !target ? '<span class="muted">sem valor</span>' : real > target ? `<span class="neg">${save ? 'além' : 'passou'} <b>${money(real - target)}</b></span>` : `${save ? 'falta' : 'resta'} <b>${money(target - real)}</b>`;
+    const pctUsed = target ? Math.round(real / target * 100) : 0;
+    const restTxt = !target ? '' : real > target ? `<span class="neg">${save ? 'além' : 'passou'} <b>${fmt(real - target)}</b></span>` : `${save ? 'falta' : 'resta'} <b>${fmt(target - real)}</b>`;
     return `<button class="bm-row" data-a="${act}meta" data-id="${m.id}" data-seg="${m.id}">
-      <span class="bm-l1"><i style="background:${col}"></i><span class="grow">${esc(m.name)}</span><b>${money(real)}</b><small>${pctUsed}%</small></span>
+      <span class="bm-l1"><i style="background:${col}"></i><span class="grow">${esc(m.name)}</span><b>${fmt(real)}</b></span>
       <span class="bm-bar"><i style="width:${Math.min(100, pctUsed)}%;background:${col}"></i></span>
-      <span class="bm-l3"><span>${target ? `de ${money(target)}${cfg.showLegendValues ? ` · ${String(share).replace('.', ',')}% da receita` : ''}` : save ? 'acumulação' : 'sem valor definido'}</span><span>${restTxt}</span></span>
+      <span class="bm-l3"><span>${target ? `de ${fmt(target)}` : 'sem valor definido'}</span><span>${restTxt}</span></span>
     </button>`;
   }).join('');
   const ecoPct = saveLeft ? Math.round(saveNow / saveLeft * 100) : 0;
-  const ecoRow = base ? `<div class="bm-row bm-eco" data-seg="eco"><span class="bm-l1"><i style="background:#45cf7f"></i><span class="grow">Economia</span><b class="pos">${money(saveNow)}</b><small>${ecoPct}%</small></span>
+  const ecoRow = base ? `<div class="bm-row bm-eco" data-seg="eco"><span class="bm-l1"><i style="background:#45cf7f"></i><span class="grow">Economia</span><b class="pos">${fmt(saveNow)}</b></span>
       <span class="bm-bar"><i style="width:${Math.min(100, ecoPct)}%;background:#45cf7f"></i></span>
-      <span class="bm-l3"><span>de ${money(saveLeft)} · ${String(Math.round(saveLeft / base * 1000) / 10).replace('.', ',')}% da receita</span><span>recebido <b>${money(d.base.received || 0)}</b></span></span></div>` : '';
-  const warn = d.excess > 0 || (base && !saveLeft) ? `<p class="bm-warn">As metas passam da receita${d.excess ? ` em ${money(d.excess)}` : ''}.</p>` : '';
+      <span class="bm-l3"><span>de ${fmt(saveLeft)}</span><span></span></span></div>` : '';
+  const warn = d.excess > 0 || (base && !saveLeft) ? `<p class="bm-warn">As metas passam da receita${d.excess ? ` em ${fmt(d.excess)}` : ''}.</p>` : '';
   if (!base && !list.length) return '<div class="empty donut-empty">Nenhuma receita nem meta nesta conta.</div>';
   return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas sobre 100% da receita">
       <circle cx="110" cy="110" r="${r}" fill="none" stroke="#1F1F22" stroke-width="28"/>${svg}
       <circle class="bm-hole" cx="110" cy="110" r="62" fill="transparent" stroke="none"/>
       <text class="bm-c1" x="110" y="100" text-anchor="middle" fill="#A5ACB8" font-size="11">receita</text>
-      <text class="bm-c2" x="110" y="122" text-anchor="middle" fill="#F5F5F5" font-size="${money(base).length > 11 ? 18 : 21}" font-weight="700">${esc(money(base))}</text>
-      <text class="bm-c3" x="110" y="142" text-anchor="middle" fill="${saveLeft > 0 ? '#45cf7f' : '#ff5f57'}" font-size="11" font-weight="600">${saveLeft > 0 ? `sobra ${esc(money(saveNow))} de ${esc(money(saveLeft))}` : 'sem sobra'}</text>
+      <text class="bm-c2" x="110" y="122" text-anchor="middle" fill="#F5F5F5" font-size="${fmt(base).length > 11 ? 18 : 21}" font-weight="700">${esc(pctMode ? '100%' : money(base))}</text>
+      <text class="bm-c3" x="110" y="142" text-anchor="middle" fill="${saveLeft > 0 ? '#45cf7f' : '#ff5f57'}" font-size="11" font-weight="600">${saveLeft > 0 ? `sobra ${esc(fmt(saveNow))} de ${esc(fmt(saveLeft))}` : 'sem sobra'}</text>
     </svg></div>${warn}
     <div class="bm-list">${rows}${ecoRow}</div>
     ${d.deduction.planned ? `<p class="bm-note">Doações antes da divisão: ${money(d.deduction.planned)}</p>` : ''}`;
@@ -1035,6 +1038,8 @@ function bolachaTap(ev) {
   const t = k => svg.querySelector('.bm-c' + k);
   if (!svg.dataset.d1) { svg.dataset.d1 = t(1).textContent; svg.dataset.d2 = t(2).textContent; svg.dataset.d3 = t(3).textContent; svg.dataset.f2 = t(2).getAttribute('font-size'); svg.dataset.c3 = t(3).getAttribute('fill'); }
   const same = g && svg.querySelector('.bm-seg.on') === g;
+  // 2º toque no mesmo pedaço abre a Meta (com as informações e tags dela)
+  if (same) { const row = card.querySelector(`button.bm-row[data-seg="${CSS.escape(g.dataset.id)}"]`); if (row) { row.click(); return; } }
   svg.querySelectorAll('.bm-seg').forEach(x => x.classList.remove('on'));
   card.querySelectorAll('.bm-row.sel').forEach(x => x.classList.remove('sel'));
   if (!g || same) {
@@ -1052,6 +1057,15 @@ function bolachaTap(ev) {
   if (row) row.classList.add('sel');
 }
 if (typeof document !== 'undefined') document.addEventListener('click', bolachaTap);
+/** Botão R$ / %: troca como a bolacha mostra os números (só visual). */
+const bvBtn = () => { const v = budgetCfg().view === 'pct' ? 'pct' : 'value'; return `<span class="bv-tog" role="group" aria-label="Mostrar em"><button type="button" data-bv="value" class="${v === 'value' ? 'on' : ''}">R$</button><button type="button" data-bv="pct" class="${v === 'pct' ? 'on' : ''}">%</button></span>`; };
+if (typeof document !== 'undefined') document.addEventListener('click', ev => {
+  const b = ev.target.closest && ev.target.closest('[data-bv]');
+  if (!b) return;
+  ev.preventDefault(); ev.stopPropagation();
+  const cfg = budgetCfg(); if (cfg.view === b.dataset.bv) return;
+  cfg.view = b.dataset.bv; saveBudget(cfg);
+}, true);
 const bolachaMetas = () => [...S().metas.values()].filter(C.metaVisible).filter(m => !m.archived && (m.kind === 'saving' ? !m.completedAt : (m.kind || 'expense') === 'expense'));
 
 /** Engrenagem da bolacha: só exibição e doações. O que aparece vem das Metas (valor ou % de cada uma). */
@@ -1063,8 +1077,10 @@ function budgetConfigView() {
       const sw = (k, on) => `<input type="checkbox" class="switch" data-k="${k}" ${on ? 'checked' : ''}>`;
       return `<div class="group">
           <label class="row"><span class="grow">Mostrar a bolacha abaixo do calendário</span>${sw('showOnCalendar', cfg.showOnCalendar)}</label>
-          <label class="row"><span class="grow">Valores na legenda</span>${sw('showLegendValues', cfg.showLegendValues)}</label>
         </div>
+        ${cfg.showOnCalendar && C.worldAccounts().length > 1 ? `<div class="group-title">Contas acompanhadas</div><div class="group">
+          ${C.worldAccounts().map(a => `<label class="row"><span class="dot" style="background:${a.color || 'var(--accent)'}"></span><span class="grow">${C.esc(a.name)}</span><input type="checkbox" class="switch" data-k="acc" data-id="${a.id}" ${cfg.hideOn.includes(a.id) ? '' : 'checked'}></label>`).join('')}
+        </div>` : ''}
         <div class="group-title">Doações e dízimo (antes da divisão)</div>
         <div class="group">
           <label class="row"><span class="grow">Descontar antes de dividir</span>${sw('dedOn', d.on)}</label>
@@ -1077,6 +1093,7 @@ function budgetConfigView() {
       if (type !== 'change') return;
       const cfg = budgetCfg(), k = el2.dataset.k, d = { ...(cfg.deduction || { mode: 'value', value: 0 }) };
       if (['showOnCalendar', 'showLegendValues'].includes(k)) { cfg[k] = el2.checked; return saveBudget(cfg); }
+      if (k === 'acc') { const id = el2.dataset.id; cfg.hideOn = el2.checked ? cfg.hideOn.filter(x => x !== id) : [...new Set([...cfg.hideOn, id])]; return saveBudget(cfg); }
       if (k === 'dedOn') { d.on = el2.checked; cfg.deduction = d; return saveBudget(cfg); }
       if (k === 'dedMode') { d.mode = el2.value; d.value = 0; cfg.deduction = d; return saveBudget(cfg); }
       if (k === 'dedValue') {
@@ -1509,10 +1526,11 @@ export function renderPanels(box) {
       };
       // bolacha da divisão da renda no mesmo período (pode ser desligada na engrenagem)
       const { cfg: bcfg, d: dist } = budgetDist(P.from, P.to);
-      const pie = bcfg.showOnCalendar ? `<div class="donut-card bm-card mp-dist"><div class="donut-head"><b>Por metas</b><span class="bm-head-r"><small>${esc(P.title)}</small><button class="icon-btn sm" data-a="pcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>${rendaBolacha(bcfg, dist, 'p', bolachaMetas())}</div>` : '';
+      const pieOn = bcfg.showOnCalendar && !bcfg.hideOn.includes(C.activeAccount());
+      const pie = pieOn ? `<div class="donut-card bm-card mp-dist"><div class="donut-head"><b>Por metas</b><span class="bm-head-r">${bvBtn()}<button class="icon-btn sm" data-a="pcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>${rendaBolacha(bcfg, dist, 'p', bolachaMetas())}</div>` : '';
       // o acompanhamento detalhado (dia a dia, semana a semana, acumulação) fica recolhido até o usuário pedir
       const det = P.groups.map(g => `<div class="mp-group">${esc(g.title)}</div>${g.rows.map(fmtRow).join('')}`).join('');
-      const body = pie + (det ? (bcfg.showOnCalendar ? `<button class="sim-toggle mp-more" data-a="pdet">${panelDet.open ? 'Ocultar acompanhamento' : 'Acompanhamento por período'}</button>${panelDet.open ? det : ''}` : det) : '')
+      const body = pie + (det ? (pieOn ? `<button class="sim-toggle mp-more" data-a="pdet">${panelDet.open ? 'Ocultar acompanhamento' : 'Acompanhamento por período'}</button>${panelDet.open ? det : ''}` : det) : '')
         || `<p class="hint">Nenhuma meta ${v === 'day' ? 'diária para este dia' : v === 'week' ? 'diária ou semanal para esta semana' : v === 'year' ? 'para este ano' : 'para este mês'} nesta conta.</p>`;
       const risk = rows.filter(r => r.status === 'risk').length;
       return { label: `Metas · ${P.title}`, value: rows.length ? (over ? `${over} acima do limite` : risk ? `${risk} com previsto acima` : 'Dentro do limite') : 'Nenhuma', cls: over ? 'neg' : risk ? 'warn' : '',

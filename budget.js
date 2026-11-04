@@ -23,6 +23,8 @@ export function budgetConfig(settings = {}) {
     showOnCalendar: b.showOnCalendar !== false,
     showLegendValues: b.showLegendValues !== false,
     deduction: b.deduction && typeof b.deduction === 'object' ? b.deduction : { on: false, mode: 'value', value: 0 },
+    view: b.view === 'pct' ? 'pct' : 'value',
+    hideOn: Array.isArray(b.hideOn) ? b.hideOn : [], // contas em que a bolacha não aparece abaixo do calendário
   };
 }
 
