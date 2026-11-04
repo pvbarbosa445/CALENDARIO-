@@ -1132,3 +1132,61 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
   :root { --side: 204px; --dock: clamp(250px, calc(var(--deskW) * .24), 300px); --off: 18px; --gap: 18px; }
   .drawer .nav .row b { font-size: 12px; }
 }
+
+/* =================== v2.1 — simulação do cofrinho (estilo Tesouro) =================== */
+.sim-title { margin-top: 22px; }
+.sim-srcs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.sim-src { background: var(--s2); border-radius: 14px; padding: 2px 12px 2px; }
+.sim-src .row { padding: 10px 0; }
+.sim-src .row b { display: block; font-weight: 600; }
+.sim-src .row small { display: block; color: var(--text-2); font-size: 12px; margin-top: 2px; }
+.sim-src:not(.on) { opacity: .7; }
+.sim-mode { padding: 0 0 10px; }
+.sim-mode .segmented { margin: 0 0 6px; }
+.sim-mode .row.field { padding: 6px 0 0; }
+.sim-rates { margin-top: 4px; }
+.sim-tab { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; }
+.sim-row { display: grid; grid-template-columns: 74px repeat(4, minmax(0, 1fr)); gap: 6px; align-items: center; background: var(--s2); border-radius: 12px; padding: 10px 12px; }
+.sim-row span { min-width: 0; }
+.sim-row .h { font-weight: 700; font-size: 14px; white-space: nowrap; }
+.sim-row small { display: block; font-size: 10px; font-weight: 500; color: var(--text-2); margin-top: 2px; white-space: nowrap; }
+.sim-row .v { text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+.sim-row .v b { font-size: 14px; color: #FFFFFF; }
+.sim-row .v.pos { color: var(--green); }
+.sim-leg { flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; }
+.sim-week { display: flex; align-items: center; gap: 10px; background: var(--s2); border-radius: 14px; padding: 12px; margin-bottom: 6px; }
+.sim-week b { display: block; font-size: 13.5px; font-weight: 600; }
+.sim-week span { display: block; font-size: 12.5px; color: var(--text-2); margin: 2px 0 6px; }
+.sim-week .progress { margin: 0; }
+.primary-btn.sm { width: auto; padding: 0 14px; height: 36px; font-size: 13px; flex: none; }
+.sim-note { margin-top: 14px; }
+@media (max-width: 420px) {
+  .sim-row { grid-template-columns: 74px repeat(2, minmax(0, 1fr)); row-gap: 8px; }
+  .sim-row .h { grid-row: span 2; }
+}
+
+/* =================== v2.1.1 — simulação do cofrinho simples, como o simulador do Tesouro =================== */
+.sim-card { background: #141414; border: 1px solid #222; border-radius: 18px; padding: 16px 16px 12px; margin: 4px 0 12px; }
+.sim-have { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.sim-have small { font-size: 13px; color: var(--text-2); }
+.sim-have b { font-size: 20px; color: #FFFFFF; font-variant-numeric: tabular-nums; }
+.sim-years { margin: 14px 0 4px; }
+.sim-years button { font-size: 13px; }
+.sim-main { padding: 14px 0 12px; }
+.sim-main small { display: block; font-size: 13px; color: var(--text-2); }
+.sim-main b { display: block; font-size: 34px; line-height: 1.15; font-weight: 800; color: var(--green); letter-spacing: -.5px; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.sim-main span { display: block; font-size: 12px; color: var(--text-2); }
+.sim-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px 0 4px; border-top: 1px solid var(--line); }
+.sim-facts small { display: block; font-size: 11.5px; color: var(--text-2); }
+.sim-facts b { display: block; font-size: 13.5px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.sim-src-line { font-size: 12px; color: var(--text-2); margin: 10px 0 0; line-height: 1.45; }
+.sim-src-line .link-btn { font-size: 12px; padding: 0; }
+.sim-card > .primary-btn { margin-top: 4px; }
+.sim-toggle { display: block; width: 100%; margin: 14px 0 4px; padding: 12px; border-radius: 12px; background: var(--s2); color: var(--accent); font-size: 14px; font-weight: 600; }
+.sim-more { margin-top: 6px; }
+.sim-months { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.sim-months span { background: var(--s2); border-radius: 10px; padding: 7px 8px; }
+.sim-months small { display: block; font-size: 10.5px; color: var(--text-2); }
+.sim-months b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.sim-foot { list-style: none; padding: 0; margin: 16px 2px 8px; font-size: 11.5px; line-height: 1.6; color: var(--text-3, #7a7a7a); }
+@media (min-width: 1100px) { .sim-main b { font-size: 40px; } }

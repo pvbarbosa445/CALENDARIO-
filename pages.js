@@ -4,6 +4,7 @@
 import { itemsInRange, occKey, counts, realizedOf } from './engine.js';
 import { addDays, parse, iso, daysInMonth, addMonths, MONTHS } from './dates.js';
 import * as db from './db.js';
+import * as SIM from './sim.js';
 
 let C;            // contexto compartilhado do app (estado, formatação, diálogos, gravação)
 let el;           // a folha das páginas
@@ -117,7 +118,7 @@ function fieldsHTML(fields, vals) {
   return html;
 }
 
-function formView({ title, fields, value, onSave, onDelete, deleteLabel = 'Excluir', extra }) {
+function formView({ title, fields, value, onSave, onDelete, deleteLabel = 'Excluir', extra, extraActions = {} }) {
   const view = {
     title, vals: structuredClone(value),
     right: {
@@ -128,7 +129,7 @@ function formView({ title, fields, value, onSave, onDelete, deleteLabel = 'Exclu
       },
     },
     body: () => fieldsHTML(fields, view.vals) + (extra ? extra(view.vals) : '') + (onDelete ? `<button class="danger-btn" data-a="del">${deleteLabel}</button>` : ''),
-    actions: { del: async () => { if (await onDelete(view.vals)) { stack.pop(); back(); } } },
+    actions: { ...extraActions, del: async () => { if (await onDelete(view.vals)) { stack.pop(); back(); } } },
   };
   return view;
 }
@@ -539,36 +540,160 @@ function piggiesView() {
   };
 }
 
+// ---------- simulação do cofrinho: apoio comum à tela principal e à configuração ----------
+const simSources = () => C.accountsList().filter(a => a.type !== 'piggy');
+const simCfgOf = p => SIM.simConfig(p, simSources(), S().settings.defaultAccount);
+const simRun = (p, cfg) => SIM.simulate({ data: S().data, piggy: p, cfg, today: C.today(), mondayFirst: S().settings.mondayFirst, account: S().accounts.get(p.accountId) });
+const pctTxt = v => String(Math.round(v * 100) / 100).replace('.', ',');
+/** Grava só a configuração da simulação (sem lançamentos e sem mexer em saldos). */
+async function saveSim(id, sim) {
+  const p = S().piggies.get(id); if (!p) return;
+  const obj = { ...p, sim: { ...(p.sim || {}), ...sim } };
+  await db.put('piggies', obj); S().piggies.set(id, obj);
+  render();
+}
+
 function piggyDetail(id) {
-  return {
-    get title() { return (S().piggies.get(id) || {}).name || 'Cofrinho'; },
-    get sub() { const p = S().piggies.get(id); return p ? (p.type === 'real' ? 'Conta separada' : `Virtual · em ${C.esc(C.accName(p.accountId))}`) : ''; },
-    right: { label: 'Editar', fn: () => push(piggyForm(S().piggies.get(id))) },
+  const pig = () => S().piggies.get(id);
+  let years = 10, details = false;
+  const view = {
+    get title() { return (pig() || {}).name || 'Cofrinho'; },
+    get sub() { const p = pig(); return p ? (p.type === 'real' ? 'Conta separada' : `Virtual · em ${C.esc(C.accName(p.accountId))}`) : ''; },
+    right: { label: 'Editar', fn: () => push(piggyForm(pig())) },
     body: () => {
-      const p = S().piggies.get(id); if (!p) return '';
-      const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0, { money, dmy } = C;
-      let plan = '';
-      if (p.goal && p.deadline && saved < p.goal) {
-        const months = Math.max(1, (parse(p.deadline).y - parse(C.today()).y) * 12 + parse(p.deadline).m - parse(C.today()).m);
-        plan = stat('Para chegar no prazo', `${money(Math.ceil((p.goal - saved) / months))}/mês`);
-      }
+      const p = pig(); if (!p) return '';
+      const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0, { money, dmy, esc, dm } = C;
       const t = C.today();
-      const moves = itemsFor(it => it.piggyId === id || (p.type === 'real' && (it.accountId === p.accountId || it.toAccountId === p.accountId)), addDays(t, -365), addDays(t, 60));
-      return `<div class="stats">
-          ${stat('Guardado', money(saved), '', true)}
-          ${p.goal ? stat('Meta', money(p.goal)) + stat('Falta', money(Math.max(0, p.goal - saved))) : ''}
-          ${p.deadline ? stat('Prazo', dmy(p.deadline)) : ''}${plan}
-        </div>
-        ${p.goal ? progress(saved / p.goal, p.color) : ''}
+      const cfg = simCfgOf(p), accs = simSources(), r = simRun(p, cfg);
+      const on = accs.filter(a => cfg.sources[a.id].on);
+      const h = r.results.find(x => x.years === years) || r.results[r.results.length - 1];
+      const srcTxt = on.length ? on.map(a => `${esc(a.name)} (${cfg.sources[a.id].mode === 'weekly' ? `${money(cfg.sources[a.id].weekly)}/semana` : 'sobra do mês'})`).join(' + ') : 'nenhuma conta';
+      // ---------- cartão principal (como o simulador do Tesouro) ----------
+      const card = `<div class="sim-card">
+          <div class="sim-have"><small>Já guardado</small><b>${money(saved)}</b></div>
+          <div class="segmented sim-years">${SIM.HORIZONS.map(n => `<button class="${n === years ? 'on' : ''}" data-a="years" data-id="${n}">${n} ${n === 1 ? 'ano' : 'anos'}</button>`).join('')}</div>
+          ${on.length ? `<div class="sim-main"><small>em ${years} ${years === 1 ? 'ano' : 'anos'} você poderá ter</small><b>${money(h.real)}*</b><span>em dinheiro de hoje · ${dmy(h.date)}</span></div>
+          <div class="sim-facts">
+            <div><small>Valor nominal futuro</small><b>${money(h.nominal)}</b></div>
+            <div><small>Rentabilidade</small><b>IPCA + ${pctTxt(cfg.rate)}% a.a.</b></div>
+            <div><small>Guardando por mês</small><b>${money(r.perMonth)}</b></div>
+          </div>
+          <p class="sim-src-line">Fontes: ${srcTxt} · <button class="link-btn" data-a="config">ajustar</button></p>`
+          : `<div class="sim-main"><small>Simulação desligada</small><span>Escolha de onde vem o dinheiro para ver a projeção.</span></div><button class="primary-btn ghost" data-a="config">Escolher contas</button>`}
+        </div>`;
+      // ---------- meta da semana (ação do dia a dia) ----------
+      const weekly = accs.filter(a => cfg.sources[a.id].on && cfg.sources[a.id].mode === 'weekly' && cfg.sources[a.id].weekly > 0);
+      const weekRows = weekly.map(a => {
+        const w = SIM.weekProgress(r.flows, a.id, cfg.sources[a.id].weekly, t, S().settings.mondayFirst);
+        const done = w.left === 0, blocked = p.type !== 'real' && a.id !== p.accountId;
+        return `<div class="sim-week"><div class="grow"><b>${esc(a.name)} · semana ${dm(w.start)} a ${dm(w.end)}</b>
+            <span>${money(w.done)} de ${money(cfg.sources[a.id].weekly)} · ${done ? 'meta da semana cumprida' : `faltam ${money(w.left)}`}</span>
+            ${progress(w.done / cfg.sources[a.id].weekly, p.color || 'var(--accent)')}
+            ${blocked ? '<span class="muted small">Cofrinho virtual de outra conta: para guardar daqui, use um cofrinho real.</span>' : ''}</div>
+          ${done || blocked ? '' : `<button class="primary-btn ghost sm" data-a="inFrom" data-id="${a.id}">Guardar</button>`}</div>`;
+      }).join('');
+      // ---------- detalhes (abrem só quando o usuário quiser) ----------
+      let more = '';
+      if (details) {
+        const moves = itemsFor(it => it.piggyId === id || (p.type === 'real' && (it.accountId === p.accountId || it.toAccountId === p.accountId)), addDays(t, -365), addDays(t, 60));
+        const tab = r.results.map(x => `<div class="sim-row"><span class="h">${x.years} ${x.years === 1 ? 'ano' : 'anos'}<small>${dmy(x.date)}</small></span>
+            <span class="v"><b>${money(x.real)}</b><small>hoje</small></span><span class="v">${money(x.nominal)}<small>nominal</small></span>
+            <span class="v">${money(x.contributed)}<small>aportado</small></span><span class="v pos">${money(x.yield)}<small>rendimento</small></span></div>`).join('');
+        let cmp = '';
+        if (accs.length > 1) {
+          const scen = accs.map(a => ({ n: `Só ${a.name}`, c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { ...cfg.sources[x.id], on: x.id === a.id }])) } }));
+          scen.push({ n: 'Todas as contas', c: { ...cfg, sources: Object.fromEntries(accs.map(x => [x.id, { ...cfg.sources[x.id], on: true }])) } });
+          cmp = `<div class="section-label"><span>COMPARAR EM ${years} ${years === 1 ? 'ANO' : 'ANOS'}</span><span>em dinheiro de hoje</span></div>
+            ${scen.map(sc => { const rr = simRun(p, sc.c).results.find(x => x.years === years); return `<div class="kv"><span>${esc(sc.n)}</span><span>${money(rr.real)}</span></div>`; }).join('')}`;
+        }
+        const { y, m } = parse(t);
+        const surplus = r.monthly.length ? `<div class="section-label"><span>SOBRAS PREVISTAS</span><span>contas pela sobra do mês</span></div>
+          <div class="sim-months">${r.monthly.map((v, k) => { const mm = addMonths(y, m, k); return `<span><small>${MONTHS[mm.m - 1].slice(0, 3)}/${String(mm.y).slice(2)}</small><b class="${v ? '' : 'muted'}">${money(v)}</b></span>`; }).join('')}</div>
+          <p class="hint">Mês negativo conta como zero. Depois de 12 meses, a projeção usa a média: ${money(Math.round(r.monthly.reduce((a2, v) => a2 + v, 0) / 12))}/mês.</p>` : '';
+        const goal = p.goal ? `<div class="section-label"><span>PATRIMÔNIO DESEJADO</span></div>
+          <div class="kv"><span>Valor desejado</span><span>${money(p.goal)}</span></div>
+          <div class="kv"><span>Falta</span><span>${money(Math.max(0, p.goal - saved))}</span></div>
+          <div class="kv"><span>Atingido pela projeção</span><span>${r.goalAt ? (r.goalAt <= t ? 'já atingido' : `${MONTHS[parse(r.goalAt).m - 1].toLowerCase()} de ${parse(r.goalAt).y}`) : 'não em 40 anos'}</span></div>` : '';
+        more = `<div class="sim-more">
+          <div class="section-label"><span>DINHEIRO REAL</span></div>
+          <div class="kv"><span>Total aportado</span><span>${money(r.deposited)}</span></div>
+          ${r.withdrawn ? `<div class="kv"><span>Retirado</span><span>${money(r.withdrawn)}</span></div>` : ''}
+          <div class="kv"><span>Valor estimado com rendimento</span><span>${money(r.startValue)}</span></div>
+          ${on.length ? `<div class="section-label"><span>PROJEÇÃO</span></div>
+          <div class="kv"><span>Contribuição mensal média</span><span>${money(r.perMonth)}</span></div>
+          <div class="kv"><span>Por semana</span><span>${money(r.perWeek)}</span></div>
+          <div class="kv"><span>Previsto até o fim do mês</span><span>${money(r.contributions.filter(x => x.date.slice(0, 7) === t.slice(0, 7)).reduce((a2, x) => a2 + x.amount, 0))}</span></div>
+          <div class="sim-tab">${tab}</div>${surplus}${cmp}` : ''}
+          ${goal}
+          <div class="section-label"><span>DEPÓSITOS E RETIRADAS</span></div>
+          ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}
+        </div>`;
+      }
+      return `${card}
         <div class="btn-row"><button class="primary-btn" data-a="in">Guardar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
-        <div class="section-label"><span>MOVIMENTAÇÕES</span></div>
-        ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}`;
+        ${weekRows ? `<div class="section-label"><span>META DA SEMANA</span></div>${weekRows}` : ''}
+        <button class="sim-toggle${details ? ' on' : ''}" data-a="details">${details ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
+        ${more}
+        <ul class="sim-foot">
+          <li>*Projeção se as metas de economia forem cumpridas; não é rendimento garantido.</li>
+          <li>*Calculada com os dados do app: sobras previstas, metas semanais e o que você já guardou.</li>
+          <li>*Só depósitos reais contam como dinheiro guardado. Inflação estimada: ${pctTxt(cfg.ipca)}% a.a.</li>
+        </ul>`;
     },
-    actions: { in: () => piggyMove(id, 'in'), out: () => piggyMove(id, 'out'), goDay },
+    actions: {
+      in: () => piggyMove(id, 'in'), out: () => piggyMove(id, 'out'), goDay,
+      years: n => { years = +n; render(); },
+      details: () => { details = !details; render(); },
+      config: () => push(simConfigView(id)),
+      inFrom: acc => { const p = pig(), cfg = simCfgOf(p); const w = SIM.weekProgress(SIM.piggyFlows(p, S().data, C.today(), S().accounts.get(p.accountId)), acc, cfg.sources[acc].weekly, C.today(), S().settings.mondayFirst); piggyMove(id, 'in', { from: acc, amount: w.left }); },
+    },
+  };
+  return view;
+}
+
+/** Configuração da simulação (fica fora da tela principal): fontes, meta semanal e taxas. */
+function simConfigView(id) {
+  const pig = () => S().piggies.get(id);
+  const parsePct = v => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+  return {
+    title: 'Simulação', get sub() { return C.esc((pig() || {}).name || ''); },
+    body: () => {
+      const p = pig(); if (!p) return '';
+      const cfg = simCfgOf(p), { money, esc } = C, rn = SIM.nominalRate(cfg.rate, cfg.ipca);
+      const srcRows = simSources().map(a => {
+        const sc = cfg.sources[a.id];
+        return `<div class="sim-src${sc.on ? ' on' : ''}">
+          <label class="row"><span class="grow"><b>${esc(a.name)}</b><small>${sc.mode === 'weekly' ? (sc.weekly ? `meta de ${money(sc.weekly)} por semana` : 'informe a meta semanal') : 'sobra planejada de cada mês'}</small></span>
+            <input type="checkbox" class="switch" data-k="src-on" data-acc="${a.id}" ${sc.on ? 'checked' : ''}></label>
+          ${sc.on ? `<div class="sim-mode"><div class="segmented seg-sm"><button class="${sc.mode === 'surplus' ? 'on' : ''}" data-a="mode" data-id="${a.id}|surplus">Sobra do mês</button><button class="${sc.mode === 'weekly' ? 'on' : ''}" data-a="mode" data-id="${a.id}|weekly">Meta semanal</button></div>
+            ${sc.mode === 'weekly' ? `<label class="row field"><span>Guardar por semana</span><input type="text" inputmode="decimal" placeholder="0,00" data-k="src-weekly" data-acc="${a.id}" value="${C.moneyInput(sc.weekly)}"></label>` : ''}</div>` : ''}
+        </div>`;
+      }).join('');
+      return `<div class="group-title">De onde vem o dinheiro</div>
+        <div class="sim-srcs">${srcRows}</div>
+        <div class="group-title">Rendimento</div>
+        <div class="group sim-rates">
+          <label class="row field"><span>Acima do IPCA (% a.a.)</span><input type="text" inputmode="decimal" data-k="rate" value="${pctTxt(cfg.rate)}"></label>
+          <label class="row field"><span>IPCA estimado (% a.a.)</span><input type="text" inputmode="decimal" data-k="ipca" value="${pctTxt(cfg.ipca)}"></label>
+        </div>
+        <p class="hint">IPCA + ${pctTxt(cfg.rate)}% ≈ ${pctTxt(rn * 100)}% ao ano nominal (taxas compostas, não somadas). Padrão: IPCA + ${pctTxt(SIM.SIM_DEFAULT.rate)}% e IPCA de ${pctTxt(SIM.SIM_DEFAULT.ipca)}%. Tudo é salvo na hora.</p>`;
+    },
+    onField: (el2, type) => {
+      const p = pig(); if (!p || type !== 'change') return;
+      const cfg = simCfgOf(p), k = el2.dataset.k;
+      if (k === 'src-on') { cfg.sources[el2.dataset.acc].on = el2.checked; return saveSim(id, cfg); }
+      if (k === 'src-weekly') { cfg.sources[el2.dataset.acc].weekly = Math.max(0, C.parseMoney(el2.value) || 0); return saveSim(id, cfg); }
+      if (k === 'rate' || k === 'ipca') {
+        const v = parsePct(el2.value);
+        if (v == null || v < -50 || v > 100) { C.toast('Informe uma taxa válida'); render(); return; }
+        cfg[k] = v; return saveSim(id, cfg);
+      }
+    },
+    actions: { mode: v => { const [acc, mode] = v.split('|'); const cfg = simCfgOf(pig()); cfg.sources[acc].mode = mode; saveSim(id, cfg); } },
   };
 }
 
-async function piggyMove(id, dir) {
+async function piggyMove(id, dir, preset = {}) {
   const p = S().piggies.get(id);
   const b = bal(), saved = (b.piggies.get(id) || {}).saved || 0;
   const { money, esc, today } = C;
@@ -576,8 +701,8 @@ async function piggyMove(id, dir) {
   const real = p.type === 'real';
   const res = await C.dialog({
     title: dir === 'in' ? `Guardar em ${p.name}` : `Retirar de ${p.name}`,
-    html: `<input type="text" inputmode="decimal" id="pmAmount" placeholder="0,00">
-      ${real ? `<select id="pmAcc">${accs.map(a => `<option value="${a.id}">${dir === 'in' ? 'De' : 'Para'} ${esc(a.name)} (${money((b.accounts.get(a.id) || {}).real || 0)})</option>`).join('')}</select>` : `<p class="small">${dir === 'in' ? `Livre em ${esc(C.accName(p.accountId))}: ${money(((b.accounts.get(p.accountId) || {}).real || 0) - ((b.accounts.get(p.accountId) || {}).reserved || 0))}` : `Guardado: ${money(saved)}`}</p>`}
+    html: `<input type="text" inputmode="decimal" id="pmAmount" placeholder="0,00" value="${preset.amount ? C.moneyInput(preset.amount) : ''}">
+      ${real ? `<select id="pmAcc">${accs.map(a => `<option value="${a.id}" ${a.id === preset.from ? 'selected' : ''}>${dir === 'in' ? 'De' : 'Para'} ${esc(a.name)} (${money((b.accounts.get(a.id) || {}).real || 0)})</option>`).join('')}</select>` : `<p class="small">${dir === 'in' ? `Livre em ${esc(C.accName(p.accountId))}: ${money(((b.accounts.get(p.accountId) || {}).real || 0) - ((b.accounts.get(p.accountId) || {}).reserved || 0))}` : `Guardado: ${money(saved)}`}</p>`}
       <input type="date" id="pmDate" value="${today()}">`,
     actions: [{ label: 'Cancelar', value: null }, {
       label: dir === 'in' ? 'Guardar' : 'Retirar', cls: 'primary',
@@ -612,11 +737,13 @@ function piggyForm(p = null) {
       { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Emergência' },
       { k: 'type', label: 'Tipo', type: 'select', options: [['virtual', 'Virtual (reserva dentro da conta)'], ['real', 'Real (conta separada)']], show: () => !p },
       { k: 'accountId', label: 'Conta onde fica reservado', type: 'select', options: accOptions(), show: v => v.type !== 'real' },
-      { k: 'goal', label: 'Valor desejado', type: 'money' },
+      { k: 'goal', label: 'Valor desejado (opcional)', type: 'money' },
       { k: 'deadline', label: 'Prazo', type: 'date' },
       { k: 'color', label: 'Cor', type: 'color' },
       { k: 'archived', label: 'Arquivar', type: 'switch', show: () => !!p },
     ],
+    extra: () => (p ? '<div class="group-title">Simulação</div><div class="group"><button class="row action" data-a="simcfg">Contas e rendimento da simulação</button></div>' : ''),
+    extraActions: { simcfg: () => push(simConfigView(p.id)) },
     onSave: async v => {
       if (p && v.archived && !p.archived && !(await resolveRuleLinks('piggy:' + p.id, p.name))) return false;
       const obj = { ...(p || { id: C.uid(), createdAt: C.nowISO() }), ...v };

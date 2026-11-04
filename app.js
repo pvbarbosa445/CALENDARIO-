@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.0.2';
+export const APP_VERSION = '2.1.1';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -60,14 +60,16 @@ const today = () => todayISO();
 const tag = id => (id ? S.tags.get(id) : null);
 const accountsList = (all = false) => [...S.accounts.values()].filter(a => all || !a.archived).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 const accName = id => (S.accounts.get(id) || {}).name || 'Conta';
-const multiAcc = () => accountsList().length > 1;
+/** Contas que viram "mundos" no menu: o cofrinho real (conta separada) não vira uma aba própria. */
+const worldAccounts = () => accountsList().filter(a => a.type !== 'piggy');
+const multiAcc = () => worldAccounts().length > 1;
 /**
  * Conta exibida (o "mundo"): uma conta por vez, escolhida no topo do menu (Conta 1 | Conta 2).
  * Lançamentos, metas, cofrinhos, alertas e relatórios de uma conta não aparecem na outra.
  * Só a exibição muda — nada é apagado e os saldos de cada conta continuam corretos.
  */
 function activeAccount() {
-  const list = accountsList();
+  const list = worldAccounts().length ? worldAccounts() : accountsList();
   if (!list.length) return null;
   const ids = new Set(list.map(a => a.id));
   if (ids.has(S.settings.activeAccount)) return S.settings.activeAccount;
@@ -1753,7 +1755,7 @@ function syncDrawer() {
   $$('[data-setting]').forEach(el => { el.checked = !!s[el.dataset.setting]; });
   const act = activeAccount();
   $('#accSeg').hidden = !multiAcc();
-  $('#accSeg').innerHTML = multiAcc() ? accountsList().map(a => `<button type="button" data-acc="${a.id}" class="${a.id === act ? 'on' : ''}">${esc(a.name)}</button>`).join('') : '';
+  $('#accSeg').innerHTML = multiAcc() ? worldAccounts().map(a => `<button type="button" data-acc="${a.id}" class="${a.id === act ? 'on' : ''}">${esc(a.name)}</button>`).join('') : '';
   $('#rowTransfers').hidden = !multiAcc();
   $('#startDate').value = s.startDate || '';
   $$('.carry-only').forEach(el => { el.hidden = !s.carry; });
@@ -2084,7 +2086,7 @@ function bind() {
     const id = b.dataset.acc;
     if (id === activeAccount()) return;
     S.settings.activeAccount = id;
-    S.settings.hiddenAccounts = accountsList().map(a => a.id).filter(x => x !== id); // compatibilidade
+    S.settings.hiddenAccounts = worldAccounts().map(a => a.id).filter(x => x !== id); // compatibilidade
     $$('#accSeg button').forEach(x => x.classList.toggle('on', x === b));
     S.dayReveal = null;
     saveSettings(); refresh(); renderHeader();
