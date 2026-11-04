@@ -965,17 +965,31 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
   const base = d.base.planned;
   const segs = d.segs.map(s => ({ id: s.meta.id, col: s.meta.color || '#8cb6e4', size: Math.max(s.target, s.realized), strong: Math.min(s.realized, Math.max(s.target, s.realized)), over: s.kind === 'expense' ? s.over : 0 }));
   if (d.other.planned > 0) segs.push({ col: '#8E8E93', size: d.other.planned, strong: d.other.realized, over: 0 });
-  if (d.undistributed > 0) segs.push({ col: '#2A2A2E', size: d.undistributed, strong: 0, over: 0, free: true });
+  // o que sobra da receita depois das metas fica em VERDE (economia). Gastar além da meta "come" o verde.
+  const usedPlan = segs.reduce((s, x) => s + x.size, 0);
+  const saveLeft = Math.max(0, base - usedPlan);
+  if (saveLeft > 0) segs.push({ col: '#45cf7f', size: saveLeft, strong: saveLeft, over: 0, free: true });
   const T = Math.max(base, segs.reduce((s, x) => s + x.size, 0)) || 1;
   const r = 78, Cc = 2 * Math.PI * r, n = segs.filter(x => x.size > 0).length;
   let off = 0, svg = '';
   const circ = (col, dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="28" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
+  // tocar num pedaço mostra no centro qual é a Meta (como no app antigo); tocar de novo ou no centro volta à receita
+  const segInfo = x => {
+    if (x.free) return { n: 'Economia', v: money(saveLeft), t: `${Math.round(saveLeft / (base || 1) * 100)}% da receita`, id: 'eco' };
+    const s = x.id ? d.segs.find(k => k.meta.id === x.id) : null;
+    const real = Math.max(0, x.strong), tgt = s ? s.target : d.other.planned;
+    const share = base ? String(Math.round(tgt / base * 1000) / 10).replace('.', ',') : 0;
+    return { n: s ? s.meta.name : 'Fora das metas', v: money(real), t: tgt ? `de ${money(tgt)} · ${share}% da receita` : '', id: x.id || 'other' };
+  };
   for (const x of segs) {
     if (!(x.size > 0)) continue;
     const len = x.size / T * Cc, L = Math.max(0, len - (n > 1 ? 1.4 : 0)), f = Math.min(L, L * (x.strong / x.size));
-    if (L - f > 0) svg += circ(x.col, L - f, off + f, x.free ? 1 : 0.32);
+    const inf = segInfo(x);
+    svg += `<g class="bm-seg" data-id="${esc(inf.id)}" data-n="${esc(inf.n)}" data-v="${esc(inf.v)}" data-t="${esc(inf.t)}" data-c="${x.col}">`;
+    if (L - f > 0) svg += circ(x.col, L - f, off + f, 0.32);
     if (f > 0) svg += circ(x.col, f, off, 1);
-    if (x.over > 0) { const ol = Math.min(L, x.over / T * Cc); svg += `<circle cx="110" cy="110" r="${r + 19}" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="${ol} ${Cc * 1.3}" stroke-dashoffset="${-(off + L - ol) * (r + 19) / r}" transform="rotate(-90 110 110)"/>`; }
+    svg += '</g>';
+    if (x.over > 0) { const ol = Math.min(L, x.over / T * Cc); svg += `<circle cx="110" cy="110" r="${r + 19}" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="${ol} ${Cc * 1.3}" stroke-dashoffset="${-(off + L - ol) * (r + 19) / r}" transform="rotate(-90 110 110)" pointer-events="none"/>`; }
     off += len;
   }
   const used = d.segs.reduce((s, x) => s + Math.max(0, x.realized), 0) + d.other.realized;
@@ -987,23 +1001,51 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
     const target = s ? s.target : 0, real = s ? Math.max(0, s.realized) : 0, save = m.kind === 'saving';
     const pctUsed = target ? Math.round(real / target * 100) : 0, share = base && target ? Math.round(target / base * 1000) / 10 : 0;
     const restTxt = !target ? '<span class="muted">sem valor</span>' : real > target ? `<span class="neg">${save ? 'além' : 'passou'} <b>${money(real - target)}</b></span>` : `${save ? 'falta' : 'resta'} <b>${money(target - real)}</b>`;
-    return `<button class="bm-row" data-a="${act}meta" data-id="${m.id}">
+    return `<button class="bm-row" data-a="${act}meta" data-id="${m.id}" data-seg="${m.id}">
       <span class="bm-l1"><i style="background:${col}"></i><span class="grow">${esc(m.name)}</span><b>${money(real)}</b><small>${pctUsed}%</small></span>
       <span class="bm-bar"><i style="width:${Math.min(100, pctUsed)}%;background:${col}"></i></span>
-      <span class="bm-l3"><span>${target ? `${save ? 'guardar' : 'meta'} ${money(target)}${cfg.showLegendValues ? ` · ${String(share).replace('.', ',')}%` : ''}` : save ? 'acumulação' : 'só acompanhando'}</span><span>${restTxt}</span></span>
+      <span class="bm-l3"><span>${target ? `de ${money(target)}${cfg.showLegendValues ? ` · ${String(share).replace('.', ',')}% da receita` : ''}` : save ? 'acumulação' : 'sem valor definido'}</span><span>${restTxt}</span></span>
     </button>`;
   }).join('');
-  const warn = d.excess > 0 ? `<p class="bm-warn">As metas passam ${money(d.excess)} da receita.</p>` : '';
+  const ecoRow = base ? `<div class="bm-row bm-eco" data-seg="eco"><span class="bm-l1"><i style="background:#45cf7f"></i><span class="grow">Economia</span><b class="pos">${money(saveLeft)}</b><small>${base ? Math.round(saveLeft / base * 100) : 0}%</small></span></div>` : '';
+  const warn = d.excess > 0 || (base && !saveLeft) ? `<p class="bm-warn">As metas passam da receita${d.excess ? ` em ${money(d.excess)}` : ''}.</p>` : '';
   if (!base && !list.length) return '<div class="empty donut-empty">Nenhuma receita nem meta nesta conta.</div>';
   return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas sobre 100% da receita">
       <circle cx="110" cy="110" r="${r}" fill="none" stroke="#1F1F22" stroke-width="28"/>${svg}
-      <text x="110" y="104" text-anchor="middle" fill="#F5F5F5" font-size="${money(used).length > 11 ? 18 : 22}" font-weight="700">${esc(money(used))}</text>
-      <text x="110" y="125" text-anchor="middle" fill="#A5ACB8" font-size="12">de ${esc(money(base))}</text>
-      <text x="110" y="141" text-anchor="middle" fill="#6E6E73" font-size="10.5">da receita</text>
+      <circle class="bm-hole" cx="110" cy="110" r="62" fill="transparent" stroke="none"/>
+      <text class="bm-c1" x="110" y="100" text-anchor="middle" fill="#A5ACB8" font-size="11">receita</text>
+      <text class="bm-c2" x="110" y="122" text-anchor="middle" fill="#F5F5F5" font-size="${money(base).length > 11 ? 18 : 21}" font-weight="700">${esc(money(base))}</text>
+      <text class="bm-c3" x="110" y="142" text-anchor="middle" fill="${saveLeft > 0 ? '#45cf7f' : '#ff5f57'}" font-size="12" font-weight="600">${saveLeft > 0 ? `sobra ${esc(money(saveLeft))}` : 'sem sobra'}</text>
     </svg></div>${warn}
-    <div class="bm-list">${rows}</div>
+    <div class="bm-list">${rows}${ecoRow}</div>
     ${d.deduction.planned ? `<p class="bm-note">Doações antes da divisão: ${money(d.deduction.planned)}</p>` : ''}`;
 }
+/** Toque na bolacha: destaca o pedaço, mostra a Meta no centro e marca a linha dela. Só visual, não muda dados. */
+function bolachaTap(ev) {
+  const svg = ev.target.closest && ev.target.closest('.donut svg');
+  if (!svg) return;
+  const g = ev.target.closest('.bm-seg');
+  const card = svg.closest('.bm-card') || svg.parentNode.parentNode;
+  const t = k => svg.querySelector('.bm-c' + k);
+  if (!svg.dataset.d1) { svg.dataset.d1 = t(1).textContent; svg.dataset.d2 = t(2).textContent; svg.dataset.d3 = t(3).textContent; svg.dataset.f2 = t(2).getAttribute('font-size'); svg.dataset.c3 = t(3).getAttribute('fill'); }
+  const same = g && svg.querySelector('.bm-seg.on') === g;
+  svg.querySelectorAll('.bm-seg').forEach(x => x.classList.remove('on'));
+  card.querySelectorAll('.bm-row.sel').forEach(x => x.classList.remove('sel'));
+  if (!g || same) {
+    svg.classList.remove('picked');
+    t(1).textContent = svg.dataset.d1; t(2).textContent = svg.dataset.d2; t(3).textContent = svg.dataset.d3;
+    t(2).setAttribute('font-size', svg.dataset.f2); t(3).setAttribute('fill', svg.dataset.c3); t(3).setAttribute('font-size', '12');
+    return;
+  }
+  g.classList.add('on'); svg.classList.add('picked');
+  const name = g.dataset.n;
+  t(1).textContent = name.length > 22 ? name.slice(0, 21) + '…' : name;
+  t(2).textContent = g.dataset.v; t(2).setAttribute('font-size', g.dataset.v.length > 11 ? 18 : 21);
+  t(3).textContent = g.dataset.t; t(3).setAttribute('fill', g.dataset.c); t(3).setAttribute('font-size', g.dataset.t.length > 26 ? '10' : '11');
+  const row = card.querySelector(`.bm-row[data-seg="${CSS.escape(g.dataset.id)}"]`);
+  if (row) row.classList.add('sel');
+}
+if (typeof document !== 'undefined') document.addEventListener('click', bolachaTap);
 const bolachaMetas = () => [...S().metas.values()].filter(C.metaVisible).filter(m => !m.archived && (m.kind === 'saving' ? !m.completedAt : (m.kind || 'expense') === 'expense'));
 
 /** Engrenagem da bolacha: só exibição e doações. O que aparece vem das Metas (valor ou % de cada uma). */
