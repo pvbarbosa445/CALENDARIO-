@@ -233,7 +233,7 @@ async function onClick(e) {
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, i = +b.dataset.i;
   switch (a) {
-    case 'later': if (addMode) { close(false); return; } saveDraft(); close(false); C.toast('Tudo salvo. Continue quando quiser em Configurações › Dados.'); return;
+    case 'later': if (addMode) { close(false); return; } saveDraft(); close(false); C.toast('Salvo. Continue depois em Configurações.'); return;
     case 'next':
       if (D.step === STEPS.length - 1) { await finish(); return; }
       D.step++; break;

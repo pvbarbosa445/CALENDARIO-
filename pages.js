@@ -209,14 +209,14 @@ function accountsView() {
       return `<div class="stats">
           ${stat('Saldo consolidado', signed(T.total), sgnCls(T.total), true)}
           ${stat('Disponível', money(T.available))}
-          ${stat('Reservado em cofrinhos', money(T.reserved))}
           ${stat('Comprometido até o fim do mês', money(T.committed))}
-          ${stat('Transferências pendentes', money(T.pendingTransfers))}
+          ${T.reserved ? stat('Reservado em cofrinhos', money(T.reserved)) : ''}
+          ${T.pendingTransfers ? stat('Transferências pendentes', money(T.pendingTransfers)) : ''}
         </div>
         <div class="btn-row"><button class="primary-btn ghost" data-a="transfer">Transferir entre contas</button></div>
         <div class="section-label"><span>CONTAS</span></div>
         ${list.map(a => { const x = b.accounts.get(a.id); return row({ a: 'open', id: a.id, dot: a.color, t: esc(a.name) + (a.archived ? ' <span class="muted small">arquivada</span>' : '') + (a.includeInTotal === false ? ' <span class="muted small">fora do total</span>' : ''), s: [ACC_TYPES[a.type] || '', a.purpose].filter(Boolean).map(esc).join(' · '), v: signed(x.real), vs: x.reserved ? `livre ${money(x.real - x.reserved)}` : '', cls: sgnCls(x.real) }); }).join('')}
-        <p class="hint">Transferências entre suas contas não contam como receita nem despesa. Valores guardados em cofrinhos virtuais continuam na conta, mas deixam de ser dinheiro livre.</p>`;
+`;
     },
     actions: {
       open: id => push(accountDetail(id)),
@@ -535,7 +535,7 @@ function piggiesView() {
             ${p.goal ? progress(saved / p.goal, p.color) + `<span class="s">${Math.round(saved / p.goal * 100)}% de ${money(p.goal)}${p.deadline ? ` · até ${C.dmy(p.deadline)}` : ''} · ${p.type === 'real' ? 'conta separada' : `em ${esc(C.accName(p.accountId))}`}</span>` : `<span class="s">${p.type === 'real' ? 'Conta separada' : `Reservado em ${esc(C.accName(p.accountId))}`}</span>`}
           </button>`;
         }).join('') || '<div class="empty">Nenhum cofrinho. Crie um para separar dinheiro com uma finalidade.</div>'}
-        <p class="hint">Virtual: o dinheiro continua na conta, mas fica reservado. Real: é uma conta separada e cada depósito é uma transferência.</p>`;
+`;
     },
     actions: { open: id => push(piggyDetail(id)) },
   };
@@ -569,8 +569,7 @@ function piggyDetail(id) {
         <div class="btn-row"><button class="primary-btn" data-a="in">Guardar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
         ${tr.accountId && saved > 0 ? `<button class="sim-toggle" data-a="invest">Investir no ${C.esc(treasuryName())}</button>` : ''}
         <div class="section-label"><span>MOVIMENTAÇÕES</span></div>
-        ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}
-        <p class="hint">O cofrinho guarda dinheiro para um objetivo e não rende sozinho. Para acompanhar rendimento e projeções, invista no ${C.esc(treasuryName())}.</p>`;
+        ${moves.map(it => movementRow(it, p.accountId)).join('') || '<p class="hint">Nada guardado ainda.</p>'}`;
     },
     actions: { in: () => piggyMove(id, 'in'), out: () => piggyMove(id, 'out'), goDay, invest: () => treasuryMove('in', { from: 'piggy:' + id }) },
   };
@@ -584,7 +583,7 @@ const TR_ITEMS = {
   saved: 'Patrimônio investido', projected: 'Patrimônio projetado', income: 'Renda se parar de aportar',
   breakdown: 'Aportado e rendimentos', contrib: 'Contribuição mensal média', sources: 'Fontes de contribuição',
 };
-const TR_DEFAULT_VIEW = { order: ['saved', 'projected', 'income', 'breakdown', 'contrib', 'sources'], hidden: ['contrib'], highlight: 'projected', horizons: [1, 3, 5, 10], valueMode: 'both', showDetails: true };
+const TR_DEFAULT_VIEW = { order: ['saved', 'projected', 'income', 'breakdown', 'contrib', 'sources'], hidden: ['contrib', 'breakdown', 'sources'], highlight: 'projected', horizons: [1, 3, 5, 10], valueMode: 'both', showDetails: true };
 const HORIZON_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25, 30];
 const treasury = () => S().settings.treasury || {};
 const treasuryName = () => { const a = S().accounts.get(treasury().accountId); return a ? a.name : 'Tesouro'; };
@@ -698,11 +697,7 @@ function treasuryView() {
       return `${card}
         <div class="btn-row"><button class="primary-btn" data-a="in">Aportar</button><button class="primary-btn ghost" data-a="out" ${saved > 0 ? '' : 'disabled'}>Retirar</button></div>
         ${v.showDetails ? `<button class="sim-toggle${details ? ' on' : ''}" data-a="details">${details ? 'Ocultar detalhes' : 'Ver detalhes'}</button>${more}` : ''}
-        <ul class="sim-foot">
-          <li>*Projeção se as contribuições planejadas acontecerem; não é rendimento garantido.</li>
-          <li>*Só aportes registrados contam como patrimônio investido. Inflação estimada: ${pctTxt(cfg.ipca)}% a.a.</li>
-          <li>*Renda se parar de aportar: o patrimônio continua investido, sem novos aportes. Em dinheiro de hoje, é quanto dá para tirar sem perder poder de compra.</li>
-        </ul>`;
+        <p class="sim-note">*Estimativa, não é rendimento garantido. Só aportes registrados contam como investido.</p>`;
     },
     actions: {
       setup: async () => {
@@ -928,11 +923,10 @@ function metasView() {
       const bctx = C.budgetCtx();
       const cards = k => all.filter(x => (x.kind || 'expense') === k).map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
       const exp = cards('expense'), inc = cards('income'), sav = all.filter(x => x.kind === 'saving').map(savingCard).join('');
-      return `<div class="donut-card"><div class="donut-head"><b>Metas · 100% da receita · ${MONTHS[m - 1]} ${y}</b><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar a bolacha">${C.icon('gear')}</button></div>
-          <p class="hint dist-model">${C.esc(C.accName([...(S().set || [])][0]))}</p>${rendaBolacha(cfg, d, 'd')}</div>
-        ${exp ? `<div class="section-label"><span>METAS DE GASTOS</span></div>${exp}` : ''}
+      return `<div class="donut-card bm-card"><div class="donut-head"><b>Por metas</b><span class="bm-head-r"><small>${MONTHS[m - 1].slice(0, 3).toLowerCase()}/${y}</small><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>
+          ${rendaBolacha(cfg, d, 'd', bolachaMetas())}</div>
         ${inc ? `<div class="section-label"><span>METAS DE RECEITAS</span></div>${inc}` : ''}
-        ${sav ? `<div class="section-label"><span>METAS DE ACUMULAÇÃO</span></div>${sav}` : ''}
+        ${(() => { const done = all.filter(x => x.kind === 'saving' && x.completedAt); return done.length ? `<div class="section-label"><span>CONCLUÍDAS</span></div>${done.map(savingCard).join('')}` : ''; })()}
         ${exp || inc || sav ? '' : '<div class="empty">Nenhuma meta. Toque em + para criar.</div>'}`;
     },
     actions: {
@@ -960,47 +954,56 @@ function budgetDist(from, to) {
   return { cfg, d: B.metaDistribution({ data: S().data, metas, ids: [...(S().set || [])], from, to, piggies: [...S().piggies.values()], treasuryAccountId: treasury().accountId, isHoliday: S().isHoliday, today: C.today(), deduction: cfg.deduction }) };
 }
 /**
- * Desenho da bolacha. Tamanho de cada segmento = % da receita que a Meta planeja (por valor ou por %).
- * Parte apagada = planejado; parte viva = realizado (gasto confirmado ou depósito feito). Excesso marcado em vermelho.
- * Tocar num item abre a Meta (com as tags). `act` = prefixo das ações (página de Metas ou área do calendário).
+ * Cartão "Por metas" (como no app antigo, agora sobre 100% da receita): a rosca e, embaixo, uma linha por Meta.
+ * Rosca: tamanho = % da receita que a Meta planeja; parte apagada = planejado; cor viva = realizado.
+ * Linha: valor realizado, % usado, barra, "meta R$ X · % da receita" e "resta". Tocar abre a Meta.
+ * `metas` = todas as metas de despesa/acumulação da conta (as sem valor também aparecem na lista).
  */
-function rendaBolacha(cfg, d, act = 'd') {
+function rendaBolacha(cfg, d, act = 'd', metas = []) {
   const { money, esc } = C;
   const base = d.base.planned;
-  const segs = d.segs.map(s => ({ id: s.meta.id, n: s.meta.name, col: s.meta.color || '#8cb6e4', size: Math.max(s.target, s.realized), strong: Math.min(s.realized, Math.max(s.target, s.realized)), over: s.kind === 'expense' ? s.over : 0, s }));
-  if (d.other.planned > 0) segs.push({ id: '', n: 'Gastos sem meta', col: '#8E8E93', size: d.other.planned, strong: d.other.realized, over: 0 });
-  if (d.undistributed > 0) segs.push({ id: '', n: 'Não distribuído', col: '#3A3A3C', size: d.undistributed, strong: 0, over: 0, free: true });
-  if (!base && !segs.some(x => x.size)) return `<div class="empty donut-empty">Nenhuma receita prevista neste período nesta conta.</div>`;
-  const T = Math.max(base, segs.reduce((s, x) => s + x.size, 0));
+  const segs = d.segs.map(s => ({ id: s.meta.id, col: s.meta.color || '#8cb6e4', size: Math.max(s.target, s.realized), strong: Math.min(s.realized, Math.max(s.target, s.realized)), over: s.kind === 'expense' ? s.over : 0 }));
+  if (d.other.planned > 0) segs.push({ col: '#8E8E93', size: d.other.planned, strong: d.other.realized, over: 0 });
+  if (d.undistributed > 0) segs.push({ col: '#2A2A2E', size: d.undistributed, strong: 0, over: 0, free: true });
+  const T = Math.max(base, segs.reduce((s, x) => s + x.size, 0)) || 1;
   const r = 78, Cc = 2 * Math.PI * r, n = segs.filter(x => x.size > 0).length;
   let off = 0, svg = '';
-  const circ = (col, dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="26" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
+  const circ = (col, dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="28" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
   for (const x of segs) {
     if (!(x.size > 0)) continue;
-    const len = x.size / T * Cc, L = Math.max(0, len - (n > 1 ? 1.6 : 0)), f = Math.min(L, L * (x.strong / x.size));
-    if (L - f > 0) svg += circ(x.col, L - f, off + f, x.free ? 1 : 0.28);
+    const len = x.size / T * Cc, L = Math.max(0, len - (n > 1 ? 1.4 : 0)), f = Math.min(L, L * (x.strong / x.size));
+    if (L - f > 0) svg += circ(x.col, L - f, off + f, x.free ? 1 : 0.32);
     if (f > 0) svg += circ(x.col, f, off, 1);
-    if (x.over > 0) { const ol = Math.min(L, x.over / T * Cc); svg += `<circle cx="110" cy="110" r="${r + 18}" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="${ol} ${Cc * 1.3}" stroke-dashoffset="${-(off + L - ol) * (r + 18) / r}" transform="rotate(-90 110 110)"/>`; }
+    if (x.over > 0) { const ol = Math.min(L, x.over / T * Cc); svg += `<circle cx="110" cy="110" r="${r + 19}" fill="none" stroke="var(--red)" stroke-width="3" stroke-dasharray="${ol} ${Cc * 1.3}" stroke-dashoffset="${-(off + L - ol) * (r + 19) / r}" transform="rotate(-90 110 110)"/>`; }
     off += len;
   }
-  const pctOf = v => (base ? Math.round(v / base * 1000) / 10 : 0);
-  const legend = segs.map(x => {
-    const s = x.s;
-    const right = s ? `<b>${pctTxt(pctOf(s.target))}%</b>${cfg.showLegendValues ? ` <small>${money(s.realized)} de ${money(s.target)}</small>` : ''}${s.over && s.kind === 'expense' ? ' <small class="neg">excedeu</small>' : ''}` : (cfg.showLegendValues ? ` <small>${money(x.size)}</small>` : '');
-    return `<button ${x.id ? `data-a="${act}meta" data-id="${x.id}"` : ''} class="${x.id ? '' : 'static'}"><i style="background:${x.col}"></i>${esc(x.n)} ${right}</button>`;
+  const used = d.segs.reduce((s, x) => s + Math.max(0, x.realized), 0) + d.other.realized;
+  // uma linha por Meta (na ordem da rosca; metas sem valor no fim)
+  const segOf = new Map(d.segs.map(x => [x.meta.id, x]));
+  const list = [...d.segs.map(x => x.meta), ...metas.filter(m => !segOf.has(m.id))];
+  const rows = list.map(m => {
+    const s = segOf.get(m.id), col = m.color || '#8cb6e4';
+    const target = s ? s.target : 0, real = s ? Math.max(0, s.realized) : 0, save = m.kind === 'saving';
+    const pctUsed = target ? Math.round(real / target * 100) : 0, share = base && target ? Math.round(target / base * 1000) / 10 : 0;
+    const restTxt = !target ? '<span class="muted">sem valor</span>' : real > target ? `<span class="neg">${save ? 'além' : 'passou'} <b>${money(real - target)}</b></span>` : `${save ? 'falta' : 'resta'} <b>${money(target - real)}</b>`;
+    return `<button class="bm-row" data-a="${act}meta" data-id="${m.id}">
+      <span class="bm-l1"><i style="background:${col}"></i><span class="grow">${esc(m.name)}</span><b>${money(real)}</b><small>${pctUsed}%</small></span>
+      <span class="bm-bar"><i style="width:${Math.min(100, pctUsed)}%;background:${col}"></i></span>
+      <span class="bm-l3"><span>${target ? `${save ? 'guardar' : 'meta'} ${money(target)}${cfg.showLegendValues ? ` · ${String(share).replace('.', ',')}%` : ''}` : save ? 'acumulação' : 'só acompanhando'}</span><span>${restTxt}</span></span>
+    </button>`;
   }).join('');
-  const warn = d.excess > 0 ? `<p class="hint neg center">As metas somam ${pctTxt(d.sumPct)}% da receita: passaram ${money(d.excess)} dos 100%.</p>`
-    : d.undistributed > 0 && d.segs.length ? `<p class="hint center">${money(d.undistributed)} (${pctTxt(pctOf(d.undistributed))}%) da receita ainda sem meta.</p>` : '';
+  const warn = d.excess > 0 ? `<p class="bm-warn">As metas passam ${money(d.excess)} da receita.</p>` : '';
+  if (!base && !list.length) return '<div class="empty donut-empty">Nenhuma receita nem meta nesta conta.</div>';
   return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas sobre 100% da receita">
-      <circle cx="110" cy="110" r="${r}" fill="none" stroke="#2A2A2E" stroke-width="26"/>${svg}
-      <text x="110" y="101" text-anchor="middle" fill="#F5F5F5" font-size="${money(base).length > 11 ? 15 : 18}" font-weight="700">${esc(money(base))}</text>
-      <text x="110" y="120" text-anchor="middle" fill="#A5ACB8" font-size="11">${d.deduction.planned ? 'receita após doações' : 'receita do período'}</text>
-      <text x="110" y="136" text-anchor="middle" fill="#A5ACB8" font-size="11">recebido ${esc(money(d.base.received))}</text>
-    </svg></div>
-    ${d.deduction.planned ? `<p class="hint center">Doações/dízimo antes da divisão: ${money(d.deduction.planned)} (receita ${money(d.income.planned)})</p>` : ''}
-    <div class="donut-legend dist-legend">${legend}</div>${warn}
-    <p class="hint center mp-hint">Cada parte é uma Meta. Parte apagada = planejado · cor viva = realizado. Toque para abrir a Meta e as tags.</p>`;
+      <circle cx="110" cy="110" r="${r}" fill="none" stroke="#1F1F22" stroke-width="28"/>${svg}
+      <text x="110" y="104" text-anchor="middle" fill="#F5F5F5" font-size="${money(used).length > 11 ? 18 : 22}" font-weight="700">${esc(money(used))}</text>
+      <text x="110" y="125" text-anchor="middle" fill="#A5ACB8" font-size="12">de ${esc(money(base))}</text>
+      <text x="110" y="141" text-anchor="middle" fill="#6E6E73" font-size="10.5">da receita</text>
+    </svg></div>${warn}
+    <div class="bm-list">${rows}</div>
+    ${d.deduction.planned ? `<p class="bm-note">Doações antes da divisão: ${money(d.deduction.planned)}</p>` : ''}`;
 }
+const bolachaMetas = () => [...S().metas.values()].filter(C.metaVisible).filter(m => !m.archived && (m.kind === 'saving' ? !m.completedAt : (m.kind || 'expense') === 'expense'));
 
 /** Engrenagem da bolacha: só exibição e doações. O que aparece vem das Metas (valor ou % de cada uma). */
 function budgetConfigView() {
@@ -1278,7 +1281,7 @@ function metaForm(m = null) {
 
 // ------------------------------------------------------------------ RELATÓRIOS
 function reportsView() {
-  let mode = 'month';
+  let mode = 'month', more = false;
   let ref = C.today();
   const view = {
     title: 'Relatórios',
@@ -1306,14 +1309,18 @@ function reportsView() {
         <div class="period-nav"><button class="icon-btn" data-a="prev">${C.icon('left')}</button><span>${mode === 'month' ? `${MONTHS[m - 1]} ${y}` : y}</span><button class="icon-btn" data-a="next">${C.icon('right')}</button></div>
         <div class="stats">
           ${stat('Economia realizada', signed(saving), sgnCls(saving), true)}
-          ${stat('Receitas recebidas', money(r.incReal), 'pos')}${stat('Receitas previstas', money(r.inc))}
-          ${stat('Despesas pagas', money(r.expReal), 'neg')}${stat('Despesas previstas', money(r.exp))}
+          ${stat('Receitas recebidas', money(r.incReal), 'pos')}
+          ${stat('Despesas pagas', money(r.expReal), 'neg')}
+        </div>
+        <button class="sim-toggle" data-a="more">${more ? 'Ocultar detalhes' : 'Ver detalhes'}</button>
+        ${more ? `<div class="stats">
+          ${stat('Receitas previstas', money(r.inc))}${stat('Despesas previstas', money(r.exp))}
           ${stat('Realizado x previsto', `${diffExp > 0 ? '+' : diffExp < 0 ? '−' : ''}${money(Math.abs(diffExp))}`, diffExp > 0 ? 'neg' : 'pos')}
           ${stat(mode === 'month' ? 'Gastos x mês anterior' : 'Gastos x ano anterior', delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta}%`, delta > 0 ? 'neg' : delta < 0 ? 'pos' : '')}
         </div>
         <div class="section-label"><span>DESPESAS: PREVISTO X REALIZADO</span></div>
         <div class="bars">${cols.map(c => `<div class="col${c.cur ? ' cur' : ''}"><div class="pair"><i style="height:${c.exp / max * 100}%;background:var(--s3)"></i><i style="height:${c.expReal / max * 100}%;background:var(--accent)"></i></div><span>${c.label}</span></div>`).join('')}</div>
-        <div class="legend-mini"><span><i style="background:var(--s3)"></i>Previsto</span><span><i style="background:var(--accent)"></i>Realizado</span></div>
+        <div class="legend-mini"><span><i style="background:var(--s3)"></i>Previsto</span><span><i style="background:var(--accent)"></i>Realizado</span></div>` : ''}
         <div class="section-label"><span>GASTOS REALIZADOS POR META</span><span>com as tags de cada uma</span></div>
         ${(() => {
           // a meta é o agrupamento principal; as tags detalham o que compõe cada meta
@@ -1336,6 +1343,7 @@ function reportsView() {
     },
     actions: {
       mode: id => { mode = id; render(); },
+      more: () => { more = !more; render(); },
       closing: () => push(closingView()),
       prev: () => { const { y, m } = parse(ref); const n = mode === 'month' ? addMonths(y, m, -1) : { y: y - 1, m }; ref = iso(n.y, n.m, 1); render(); },
       next: () => { const { y, m } = parse(ref); const n = mode === 'month' ? addMonths(y, m, 1) : { y: y + 1, m }; ref = iso(n.y, n.m, 1); render(); },
@@ -1397,6 +1405,7 @@ const VIEWS = { closing: closingView, accounts: accountsView, piggies: piggiesVi
 
 // ------------------------------------------------------------------ PAINÉIS DA TELA INICIAL
 const openPanels = new Set(['metas']);
+const panelDet = { open: false }; // acompanhamento detalhado das metas: recolhido por padrão
 export function renderPanels(box) {
   if (!C) return;
   const on = S().settings.panels || {};
@@ -1450,12 +1459,14 @@ export function renderPanels(box) {
       };
       // bolacha da divisão da renda no mesmo período (pode ser desligada na engrenagem)
       const { cfg: bcfg, d: dist } = budgetDist(P.from, P.to);
-      const pie = bcfg.showOnCalendar ? `<div class="donut-card mp-dist"><div class="donut-head"><b>Metas · 100% da receita · ${esc(P.title)}</b><button class="icon-btn sm" data-a="pcfg" aria-label="Configurar a bolacha">${C.icon('gear')}</button></div>${rendaBolacha(bcfg, dist, 'p')}</div>` : '';
-      const body = pie + P.groups.map(g => `<div class="mp-group">${esc(g.title)}</div>${g.rows.map(fmtRow).join('')}`).join('')
+      const pie = bcfg.showOnCalendar ? `<div class="donut-card bm-card mp-dist"><div class="donut-head"><b>Por metas</b><span class="bm-head-r"><small>${esc(P.title)}</small><button class="icon-btn sm" data-a="pcfg" aria-label="Configurar">${C.icon('gear')}</button></span></div>${rendaBolacha(bcfg, dist, 'p', bolachaMetas())}</div>` : '';
+      // o acompanhamento detalhado (dia a dia, semana a semana, acumulação) fica recolhido até o usuário pedir
+      const det = P.groups.map(g => `<div class="mp-group">${esc(g.title)}</div>${g.rows.map(fmtRow).join('')}`).join('');
+      const body = pie + (det ? (bcfg.showOnCalendar ? `<button class="sim-toggle mp-more" data-a="pdet">${panelDet.open ? 'Ocultar acompanhamento' : 'Acompanhamento por período'}</button>${panelDet.open ? det : ''}` : det) : '')
         || `<p class="hint">Nenhuma meta ${v === 'day' ? 'diária para este dia' : v === 'week' ? 'diária ou semanal para esta semana' : v === 'year' ? 'para este ano' : 'para este mês'} nesta conta.</p>`;
       const risk = rows.filter(r => r.status === 'risk').length;
       return { label: `Metas · ${P.title}`, value: rows.length ? (over ? `${over} acima do limite` : risk ? `${risk} com previsto acima` : 'Dentro do limite') : 'Nenhuma', cls: over ? 'neg' : risk ? 'warn' : '',
-        body: body + '<p class="hint mp-hint">Barra clara = previsto · barra forte = realizado. Cada lançamento conta uma vez, mesmo aparecendo no dia, na semana e no mês.</p>' };
+        body };
     },
     pending: () => {
       const items = [...(S().alerts || [])].filter(a => a.items).flatMap(a => a.items);
@@ -1491,6 +1502,7 @@ export function renderPanels(box) {
       if (a.dataset.a === 'meta') { open('metas'); push(metaDetail(a.dataset.id)); }
       if (a.dataset.a === 'goDay') C.openDay(a.dataset.id);
       if (a.dataset.a === 'pmeta') { open('metas'); push(metaDetail(a.dataset.id)); }
+      if (a.dataset.a === 'pdet') { panelDet.open = !panelDet.open; renderPanels(box); }
       if (a.dataset.a === 'pcfg') { open('budget'); }
     });
   }

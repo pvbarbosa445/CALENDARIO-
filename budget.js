@@ -67,12 +67,8 @@ function savingTarget(meta, { piggy, data, today, from, to, base }) {
   let total = 0, w = savingWindow(meta, from);
   const start = String(meta.start || meta.createdAt || from).slice(0, 10);
   while (w.from <= to) {
-    if (w.to >= from && (!meta.deadline || w.from <= meta.deadline) && w.to >= start) {
-      // período parcialmente dentro do intervalo: proporcional aos dias (ex.: mensal vista na semana)
-      const lo = w.from > from ? w.from : from, hi = w.to < to ? w.to : to;
-      const len = (Date.parse(w.to) - Date.parse(w.from)) / 864e5 + 1, part = (Date.parse(hi) - Date.parse(lo)) / 864e5 + 1;
-      total += plan.perPeriod * Math.min(1, part / len);
-    }
+    // conta a parcela do período que TERMINA dentro do intervalo: uma meta mensal não vira obrigação diária
+    if (w.to >= from && w.to <= to && (!meta.deadline || w.from <= meta.deadline) && w.to >= start) total += plan.perPeriod;
     w = savingWindow(meta, addDays(w.to, 1));
   }
   return Math.round(total);
