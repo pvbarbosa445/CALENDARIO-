@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.0';
+export const APP_VERSION = '1.9.2';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -124,23 +124,23 @@ function tagColor(t) {
   return t.color;
 }
 /**
- * Cor da etiqueta de um lançamento: o mesmo matiz da tag, levado ao tom da etiqueta do Samsung
- * (#3E4B91: saturação ~40%, luminosidade ~40%), para o texto branco ficar sempre legível.
+ * Cor da tag na etiqueta, no estilo dos eventos do Samsung Calendar: o mesmo matiz da tag, mas vivo e limpo
+ * (como #52B7D3 e #EC514D). A barrinha usa essa cor; o fundo da etiqueta é a mesma cor bem escura (~17%),
+ * como o quadrado tingido do Samsung (#0B1C23 / #250D0D); o texto é branco.
  */
 const VAR_HEX = { 'var(--green)': '#55C98B', 'var(--red)': '#E47777', 'var(--accent)': '#A9D4F5' };
 function chipColor(c) {
   const hex = VAR_HEX[c] || c;
-  if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#3E4B91';
+  if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return '#52B7D3';
   const n = parseInt(hex.slice(1), 16), r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-  let h = 0;
-  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h = (h * 60 + 360) % 360;
-  const l0 = (mx + mn) / 2, s0 = d ? d / (1 - Math.abs(2 * l0 - 1)) : 0;
-  const S2 = d ? Math.min(0.42, Math.max(0.28, s0)) : 0;               // tom contido como o #3E4B91; cinzas continuam cinzas
-  const base = h >= 40 && h <= 75 ? 0.32 : h > 75 && h < 170 ? 0.33 : 0.39; // amarelos e verdes um pouco mais escuros
+  if (d < 0.06) return '#9A9AA0'; // cinzas continuam cinzas
+  let h = ((mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4) * 60 + 360) % 360;
+  const l0 = (mx + mn) / 2, s0 = d / (1 - Math.abs(2 * l0 - 1));
+  const S2 = Math.min(0.85, Math.max(0.62, s0));
+  const base = h >= 40 && h <= 170 ? 0.52 : 0.6; // amarelos e verdes vivos ficam um pouco mais escuros para não "brilhar"
   // tags da mesma meta (tons da cor da meta) continuam um pouco diferentes entre si
-  const L2 = Math.min(0.48, Math.max(0.24, base + (l0 - 0.5) * 0.3));
+  const L2 = Math.min(0.68, Math.max(0.45, base + (l0 - 0.5) * 0.2));
   const k = (1 - Math.abs(2 * L2 - 1)) * S2, x = k * (1 - Math.abs(((h / 60) % 2) - 1)), m = L2 - k / 2;
   const [R, G, B] = h < 60 ? [k, x, 0] : h < 120 ? [x, k, 0] : h < 180 ? [0, k, x] : h < 240 ? [0, x, k] : h < 300 ? [x, 0, k] : [k, 0, x];
   return '#' + [R, G, B].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
@@ -505,8 +505,8 @@ function dayLines(day, max) {
     const sg = itemSign(it);
     // dica ao passar o mouse (PC): tag · descrição · valor
     const tip = [tg && tg.name !== name ? tg.name : null, name, `${sg}${money(it.amount)}`].filter(Boolean).join(' · ');
-    // etiqueta preenchida como a do Samsung ("Finados"): cor da tag no tom do Samsung e texto branco
-    return `<span class="ln${it.status === 'paid' ? ' done' : ''}" style="--c:${chipColor(itemColor(it))}" title="${esc(tip)}"><b>${esc(name)}</b><em>${sg === '+' ? '+' : sg === '−' ? '−' : ''}${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
+    // etiqueta no estilo dos eventos do Samsung: barrinha viva na cor da tag, fundo da mesma cor bem escuro, texto branco
+    return `<span class="ln${it.status === 'paid' ? ' done' : ''}" style="--c:${chipColor(itemColor(it))}" title="${esc(tip)}"><i></i><b>${esc(name)}</b><em>${sg === '+' ? '+' : sg === '−' ? '−' : ''}${compact(it.amount).replace(/^[+−]/, '')}</em></span>`;
   };
   return `<span class="lns">${show.map(line).join('')}${rest ? `<span class="ln more">+${rest}</span>` : ''}</span>`;
 }
@@ -1499,7 +1499,7 @@ function syncDrawer() {
   $$('.carry-only').forEach(el => { el.hidden = !s.carry; });
   $('#holState').value = s.holState;
   $('#holCity').value = s.holCity;
-  const P = { accounts: 'Contas', metas: 'Metas e orçamentos', pending: 'Pendências', upcoming: 'Próximos 7 dias', piggies: 'Cofrinhos' };
+  const P = { accounts: 'Contas', metas: 'Metas', pending: 'Pendências', upcoming: 'Próximos 7 dias', piggies: 'Cofrinhos' };
   $('#panelCfg').innerHTML = Object.entries(P).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-panel="${k}" ${s.panels[k] ? 'checked' : ''}></label>`).join('');
   $('#alertCfg').innerHTML = Object.entries(F.ALERT_TYPES).map(([k, l]) => `<label class="row"><span>${l}</span><input type="checkbox" class="switch" data-alert="${k}" ${s.alerts[k] === false ? '' : 'checked'}></label>`).join('');
   $('#btnInstall').hidden = !installPrompt;

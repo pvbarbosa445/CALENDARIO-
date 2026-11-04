@@ -653,19 +653,86 @@ function piggyForm(p = null) {
 
 // ------------------------------------------------------------------ METAS E ORÇAMENTOS
 function metasView() {
-  return {
-    title: 'Metas e orçamentos', right: { icon: 'plus', fn: () => push(metaForm()) },
+  // "bolacha" do app antigo: uma rosca por meta (Despesas | Receitas), no mês exibido no calendário
+  let kind = 'expense', sel = -1;
+  const view = {
+    title: 'Metas', right: { icon: 'plus', fn: () => push(metaForm()) },
     body: () => {
+      const { y, m } = S().view;
+      const all = [...S().metas.values()].filter(C.metaVisible);
       // gastos primeiro, depois receitas, na ordem das metas
-      const list = [...S().metas.values()].filter(C.metaVisible).sort((a, b) => ((a.kind === 'income') - (b.kind === 'income')) || ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
+      const list = all.filter(x => (x.kind || 'expense') === kind).sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
       const bctx = C.budgetCtx();
-      const hiddenN = [...S().metas.values()].filter(m => !m.archived && !C.metaVisible(m)).length;
-      return list.map(m => metaCard(m, C.F.metaProgress(C.scopedMeta(m), C.today(), bctx))).join('')
-        + (hiddenN ? `<p class="hint">${hiddenN} meta(s) de contas ocultas não aparecem. Mostre a conta em Menu › Contas no calendário.</p>` : '')
-        || '<div class="empty">Nenhuma meta. Crie limites por dia, semana ou mês, agrupando tags.</div>';
+      const seg = `<div class="segmented seg-sm"><button class="${kind === 'expense' ? 'on' : ''}" data-a="kind" data-id="expense">Despesas</button><button class="${kind === 'income' ? 'on' : ''}" data-a="kind" data-id="income">Receitas</button></div>`;
+      const cards = list.map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
+      return `<div class="donut-card"><div class="donut-head"><b>${MONTHS[m - 1]} ${y}</b>${seg}</div>${bolacha(list, kind, y, m, sel)}</div>`
+        + (cards || `<div class="empty">Nenhuma meta de ${kind === 'income' ? 'receita' : 'gasto'}. Toque em + para criar.</div>`);
     },
-    actions: { open: id => push(metaDetail(id)) },
+    actions: {
+      open: id => push(metaDetail(id)),
+      kind: id => { kind = id; sel = -1; render(); },
+      sel: id => { sel = sel === +id ? -1 : +id; render(); },
+    },
   };
+  return view;
+}
+
+/** Limite de uma meta convertido para o mês (semana, dia útil, fim de semana… viram valor mensal). */
+function monthLimit(meta, y, m) {
+  const a = meta.amount || 0;
+  if (!a) return 0;
+  const n = daysInMonth(y, m), isH = S().isHoliday;
+  let count = 0;
+  for (let d = 1; d <= n; d++) {
+    const ds = iso(y, m, d), w = new Date(Date.UTC(y, m - 1, d)).getUTCDay(), off = w === 0 || w === 6 || !!isH(ds);
+    if (meta.period === 'day' || (meta.period === 'businessDay' && !off) || (meta.period === 'weekend' && off)) count++;
+  }
+  switch (meta.period) {
+    case 'month': case 'custom': return a;
+    case 'year': return Math.round(a / 12);
+    case 'week': return Math.round(a * n / 7);
+    default: return a * count; // por dia, por dia útil, por fim de semana/feriado
+  }
+}
+
+/** A bolacha: cada meta é uma fatia do tamanho do limite (ou do que já foi, se passou);
+ *  a parte forte é o que já foi pago/recebido, a parte apagada é o que ainda resta. Toque numa fatia para ver os números. */
+function bolacha(list, kind, y, m, sel) {
+  const { money, esc } = C;
+  const from = iso(y, m, 1), to = iso(y, m, daysInMonth(y, m));
+  const items = []; for (const arr of itemsInRange(from, to, S().data).values()) items.push(...arr);
+  const mine = items.filter(it => it.kind === kind && counts(it) && C.accVisible(it));
+  const used = new Set();
+  const rows = list.map(x => {
+    const sm = C.scopedMeta(x); let g = 0;
+    for (const it of mine) { const sh = C.F.metaShare(it, sm); if (sh) { g += sh.real; used.add(it.key); } }
+    return { id: x.id, n: x.name, c: x.color || '#8cb6e4', g, l: monthLimit(x, y, m) };
+  });
+  const loose = mine.filter(it => !used.has(it.key)).reduce((s, it) => s + realizedOf(it), 0);
+  if (loose > 0) rows.push({ id: '', n: 'Sem meta', c: '#8E8E93', g: loose, l: 0 });
+  const L = rows.filter(x => x.l > 0 || x.g > 0);
+  if (!L.length) return `<div class="empty donut-empty">${kind === 'income' ? 'Nenhuma receita' : 'Nenhum gasto nem limite'} neste mês.</div>`;
+  const T = L.reduce((s, x) => s + Math.max(x.l, x.g), 0), G = L.reduce((s, x) => s + x.g, 0), M0 = L.reduce((s, x) => s + x.l, 0);
+  const r = 78, Cc = 2 * Math.PI * r, n = L.length; let off = 0, segs = '';
+  L.forEach((x, i) => {
+    const len = Math.max(x.l, x.g) / T * Cc, Ln = Math.max(0, len - (n > 1 ? 1.6 : 0)), f = Math.min(Ln, x.l ? Ln * (x.g / Math.max(x.l, x.g)) : Ln);
+    const dim = sel >= 0 && sel !== i ? 0.3 : 1, sw = sel === i ? 32 : 26;
+    const circ = (dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${x.c}" stroke-width="${sw}" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}" data-a="sel" data-id="${i}"><title>${esc(x.n)}: ${money(x.g)}${x.l ? ` de ${money(x.l)}` : ''}</title></circle>`;
+    if (Ln - f > 0) segs += circ(Ln - f, off + f, 0.28 * dim);
+    if (f > 0) segs += circ(f, off, dim);
+    off += len;
+  });
+  const o = L[sel];
+  const big = o ? money(o.g) : money(G);
+  const small = o ? `${o.n}${o.l ? ` de ${money(o.l)}` : ''}` : M0 ? `${kind === 'income' ? 'recebido de' : 'gasto de'} ${money(M0)}` : 'total no mês';
+  const note = o && o.l ? (kind === 'income' ? (o.g >= o.l ? `meta atingida` : `faltam ${money(o.l - o.g)}`) : o.g > o.l ? `${money(o.g - o.l)} acima` : `restam ${money(o.l - o.g)}`) : '';
+  return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas do mês">
+      <circle cx="110" cy="110" r="${r}" fill="none" stroke="#2A2A2E" stroke-width="26"/>${segs}
+      <text x="110" y="${note ? 101 : 107}" text-anchor="middle" fill="#F5F5F5" font-size="${big.length > 11 ? 15 : 18}" font-weight="700">${esc(big)}</text>
+      <text x="110" y="${note ? 120 : 128}" text-anchor="middle" fill="#A5ACB8" font-size="11">${esc(small.length > 26 ? small.slice(0, 25) + '…' : small)}</text>
+      ${note ? `<text x="110" y="136" text-anchor="middle" fill="${kind === 'expense' && o.g > o.l ? 'var(--red)' : '#A5ACB8'}" font-size="11">${esc(note)}</text>` : ''}
+    </svg></div>
+    <div class="donut-legend">${L.map((x, i) => `<button class="${sel === i ? 'on' : ''}" data-a="sel" data-id="${i}"><i style="background:${x.c}"></i>${esc(x.n)}</button>`).join('')}</div>`;
 }
 function metaCard(m, p) {
   const { money, esc } = C;
@@ -837,9 +904,6 @@ function reportsView() {
       const max = Math.max(1, ...cols.map(c => Math.max(c.exp, c.expReal)));
       const byTag = [...r.byTag].sort((a, b) => b[1] - a[1]);
       const tagMax = Math.max(1, ...byTag.map(x => x[1]));
-      // metas mensais cumpridas no período
-      const metas = [...S().metas.values()].filter(x => C.metaVisible(x) && x.kind !== 'income');
-      const met = metas.map(x => C.F.metaProgress(C.scopedMeta(x), mode === 'month' ? ref : iso(y, 12, 31), C.budgetCtx())).filter(p => p.limit);
       return `<div class="btn-row"><button class="primary-btn ghost" data-a="closing">Fechamento do mês</button></div>
         <div class="segmented seg-sm"><button class="${mode === 'month' ? 'on' : ''}" data-a="mode" data-id="month">Mês</button><button class="${mode === 'year' ? 'on' : ''}" data-a="mode" data-id="year">Ano</button></div>
         <div class="period-nav"><button class="icon-btn" data-a="prev">${C.icon('left')}</button><span>${mode === 'month' ? `${MONTHS[m - 1]} ${y}` : y}</span><button class="icon-btn" data-a="next">${C.icon('right')}</button></div>
@@ -853,9 +917,11 @@ function reportsView() {
         <div class="section-label"><span>DESPESAS: PREVISTO X REALIZADO</span></div>
         <div class="bars">${cols.map(c => `<div class="col${c.cur ? ' cur' : ''}"><div class="pair"><i style="height:${c.exp / max * 100}%;background:var(--s3)"></i><i style="height:${c.expReal / max * 100}%;background:var(--accent)"></i></div><span>${c.label}</span></div>`).join('')}</div>
         <div class="legend-mini"><span><i style="background:var(--s3)"></i>Previsto</span><span><i style="background:var(--accent)"></i>Realizado</span></div>
-        ${met.length ? `<div class="section-label"><span>METAS</span><span>${met.filter(p => p.real <= p.limit).length} de ${met.length} dentro do limite</span></div>${metas.map((x, i) => met[i] ? metaCard(x, met[i]) : '').join('')}` : ''}
         <div class="section-label"><span>GASTOS REALIZADOS POR TAG</span></div>
-        ${byTag.map(([tid, v]) => { const t = C.tag(tid); return `<div class="tagbar"><span class="grow">${esc(t ? t.name : 'Sem tag')}</span><span>${money(v)}</span>${progress(v / tagMax, t ? C.tagColor(t) : 'var(--text-3)')}</div>`; }).join('') || '<p class="hint">Nenhum gasto pago neste período.</p>'}`;
+        ${byTag.map(([tid, v]) => {
+          const mt = tid.startsWith('meta:') ? S().metas.get(tid.slice(5)) : null, t = mt ? null : C.tag(tid);
+          const name = mt ? `${mt.name} · geral` : t ? t.name : 'Sem tag', col = mt ? mt.color : t ? C.tagColor(t) : 'var(--text-3)';
+          return `<div class="tagbar"><span class="grow">${esc(name)}</span><span>${money(v)}</span>${progress(v / tagMax, col)}</div>`; }).join('') || '<p class="hint">Nenhum gasto pago neste período.</p>'}`;
     },
     actions: {
       mode: id => { mode = id; render(); },

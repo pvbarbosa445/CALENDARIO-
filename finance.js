@@ -291,7 +291,7 @@ export function periodReport(from, to, data, set) {
     const f = flowOf(it, set); if (!f) continue;
     r.inc += f.inc; r.exp += f.exp; r.incReal += f.incR; r.expReal += f.expR; r.count++;
     if (it.kind === 'expense' && f.expR) {
-      const parts = it.splits && it.splits.length ? it.splits.map(p => [p.tagId, Math.round(f.expR * p.amount / it.splits.reduce((s, q) => s + q.amount, 0))]) : [[it.tagId, f.expR]];
+      const parts = it.splits && it.splits.length ? it.splits.map(p => [p.tagId, Math.round(f.expR * p.amount / it.splits.reduce((s, q) => s + q.amount, 0))]) : [[it.tagId || (it.metaId ? `meta:${it.metaId}` : ''), f.expR]]; // sem tag, mas lançado direto na meta
       for (const [t, v] of parts) r.byTag.set(t || '', (r.byTag.get(t || '') || 0) + v);
     }
   }
