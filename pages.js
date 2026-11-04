@@ -62,7 +62,7 @@ function render() {
 
 async function onClick(e) {
   const nav = e.target.closest('[data-nav]');
-  if (nav) { if (nav.dataset.nav === 'back') back(); else top().right.fn(); return; }
+  if (nav) { if (nav.dataset.nav === 'back') back(); else await top().right.fn(); return; }
   const v = top(); if (!v) return;
   const col = e.target.closest('[data-color]');
   if (col && v.vals) { v.vals[col.dataset.k] = col.dataset.color; render(); return; }
@@ -82,8 +82,15 @@ function onInput(e) {
   if (v.onField) { v.onField(t, e.type); return; }
   if (!v.vals) return;
   const k = t.dataset.k, type = t.dataset.type;
-  v.vals[k] = type === 'money' ? (C.parseMoney(t.value) || 0) : type === 'switch' ? t.checked : type === 'number' ? (t.value === '' ? null : +t.value) : t.value;
-  if (e.type === 'change' && (type === 'select' || type === 'switch' || type === 'money' || t.type === 'date' || type === 'number')) render();
+  const decimalValue = (() => {
+    const raw = String(t.value || '').trim().replace(/\s/g, '');
+    if (!raw) return null;
+    const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
+  })();
+  v.vals[k] = type === 'money' ? (C.parseMoney(t.value) || 0) : type === 'switch' ? t.checked : type === 'number' ? (t.value === '' ? null : +t.value) : type === 'decimal' ? decimalValue : t.value;
+  if (e.type === 'change' && (type === 'select' || type === 'switch' || type === 'money' || t.type === 'date' || type === 'number' || type === 'decimal')) render();
 }
 
 // ------------------------------------------------------------------ formulário genérico
@@ -101,7 +108,8 @@ function fieldsHTML(fields, vals) {
     openG();
     switch (f.type) {
       case 'money': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="money" type="text" inputmode="decimal" placeholder="0,00" value="${v ? moneyInput(v) : ''}"></label>`; break;
-      case 'number': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="number" type="number" inputmode="numeric" value="${v ?? ''}" ${f.min != null ? `min="${f.min}"` : ''}></label>`; break;
+      case 'number': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="number" type="number" inputmode="numeric" step="${f.step ?? '1'}" value="${v ?? ''}" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''}></label>`; break;
+      case 'decimal': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="decimal" type="text" inputmode="decimal" value="${v ?? ''}" placeholder="0,00"></label>`; break;
       case 'date': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" type="date" value="${v || ''}"></label>`; break;
       case 'select': html += `<label class="row field"><span>${L}</span><select data-k="${f.k}" data-type="select">${(typeof f.options === 'function' ? f.options() : f.options).map(([ov, ol]) => `<option value="${esc(ov)}" ${String(ov) === String(v ?? '') ? 'selected' : ''}>${esc(ol)}</option>`).join('')}</select></label>`; break;
       case 'switch': html += `<label class="row"><span>${L}</span><input data-k="${f.k}" data-type="switch" type="checkbox" class="switch" ${v ? 'checked' : ''}></label>`; break;
@@ -124,9 +132,14 @@ function formView({ title, fields, value, onSave, onDelete, deleteLabel = 'Exclu
     title, vals: structuredClone(value),
     right: {
       label: 'Salvar', fn: async () => {
-        for (const f of fields) if (f.required && (!f.show || f.show(view.vals)) && !view.vals[f.k]) { C.toast(`Preencha: ${f.label}`); return; }
-        const ok = await onSave(view.vals);
-        if (ok !== false) back();
+        try {
+          for (const f of fields) if (f.required && (!f.show || f.show(view.vals)) && !view.vals[f.k]) { C.toast(`Preencha: ${f.label}`); return; }
+          const ok = await onSave(view.vals);
+          if (ok !== false) back();
+        } catch (err) {
+          console.error('Falha ao salvar formulário:', err);
+          C.toast(`Não foi possível salvar: ${err && err.message ? err.message : 'erro inesperado'}`);
+        }
       },
     },
     body: () => fieldsHTML(fields, view.vals) + (extra ? extra(view.vals) : '') + (onDelete ? `<button class="danger-btn" data-a="del">${deleteLabel}</button>` : ''),
@@ -152,9 +165,9 @@ function row({ a, id, dot, t, s, v, vs, cls = '' }) {
 }
 const STORE_LABEL = { accounts: 'Conta', piggies: 'Cofrinho', metas: 'Meta' };
 const FIELD_LABEL = { name: 'nome', initialBalance: 'saldo inicial', amount: 'limite', goal: 'valor desejado', deadline: 'prazo', type: 'tipo', period: 'período',
-  purpose: 'finalidade', institution: 'instituição', includeInTotal: 'soma no total', archived: 'arquivada', color: 'cor', rollover: 'sobras', carryExcess: 'excedente',
+  purpose: 'finalidade', institution: 'instituição', includeInTotal: 'soma no total', archived: 'arquivada', color: 'cor', rollover: 'sobras', carryExcess: 'excedente', allocationMode: 'forma de distribuição', allocationPct: 'percentual da renda', allocationValue: 'valor mensal destinado',
   showOnCalendar: 'colorir dias', alertPct: 'alerta (%)', tagIds: 'tags', accountIds: 'contas', allowedTags: 'despesas permitidas', rules: 'regras de distribuição', accountId: 'conta', kind: 'tipo' };
-const MONEY_FIELDS = new Set(['initialBalance', 'amount', 'goal']);
+const MONEY_FIELDS = new Set(['initialBalance', 'amount', 'goal', 'allocationValue']);
 /** Diferenças campo a campo (antes → depois) para o histórico. */
 function diffRecord(before, after) {
   if (!before) return ['Criado'];
@@ -1050,8 +1063,11 @@ function budgetConfigView() {
   return {
     title: 'Divisão da renda',
     body: () => {
-      const cfg = budgetCfg(), model = budgetModel(cfg), { esc } = C, pc = B.pctCheck(model);
-      const d = cfg.deduction || { on: false, mode: 'value', value: 0 };
+      const cfg = budgetCfg(), { esc } = C, d = cfg.deduction || { on: false, mode: 'value', value: 0 };
+      const today = C.today(), { y: cy, m: cm } = parse(today);
+      const currentDist = budgetDist(iso(cy, cm, 1), iso(cy, cm, daysInMonth(cy, cm))).d;
+      const model = { cats: currentDist.cats };
+      const pc = B.pctCheck(model);
       const sw = (k, on) => `<input type="checkbox" class="switch" data-k="${k}" ${on ? 'checked' : ''}>`;
       const accs = C.accountsList().filter(a => a.type !== 'piggy' && a.type !== 'treasury');
       const metas = [...S().metas.values()].filter(m => !m.archived && (m.kind || 'expense') !== 'income')
@@ -1073,12 +1089,15 @@ function budgetConfigView() {
           <label class="row field"><span>${d.mode === 'percent' ? 'Percentual (%)' : 'Valor por mês'}</span><input type="text" inputmode="decimal" data-k="dedValue" value="${d.mode === 'percent' ? pctTxt(+d.value || 0) : C.moneyInput(+d.value || 0)}"></label>` : ''}
         </div>
         <div class="group-title">Metas que compõem a bolacha <span class="${pc.ok ? 'pos' : pc.missing < 0 ? 'neg' : 'warn'}">${pctTxt(pc.sum)}%</span></div>
-        <p class="hint">A bolacha não possui categorias próprias. Cada segmento corresponde diretamente a uma Meta cadastrada. Para alterar nome, cor ou percentual, abra a própria Meta abaixo.</p>
+        <p class="hint">Cada segmento corresponde diretamente a uma Meta cadastrada. Para alterar nome, cor, percentual ou valor, abra a própria Meta abaixo e escolha como deseja defini-la.</p>
         ${!pc.ok ? `<p class="hint ${pc.missing < 0 ? 'neg' : 'warn'}">${pc.missing > 0 ? `Faltam ${pctTxt(pc.missing)}% para distribuir.` : `As Metas somam ${pctTxt(-pc.missing)}% acima de 100%.`} Ajuste os percentuais nas próprias Metas.</p>` : ''}
         <div class="group">${metas.map(m => {
           const c = cats.find(x => x.id === m.id), pct = c ? +c.pct || 0 : 0;
+          const mode = c ? c.allocationMode : (m.allocationMode || 'percent');
+          const allocationUnit = c && c.allocationPeriod ? (C.F.PERIODS[c.allocationPeriod] || 'Por mês').replace(/^Por /, '').toLowerCase() : 'mês';
+          const allocationLabel = mode === 'value' ? `${C.money(c ? c.allocationValue || 0 : m.allocationValue || 0)} / ${allocationUnit}` : `${pctTxt(pct)}%`;
           const links = m.kind === 'saving' ? (m.piggyId ? (S().piggies.get(m.piggyId) || {}).name || (m.piggyId === B.TREASURY ? treasuryName() : '') : '') : (m.tagIds || []).map(id => (C.tag(id) || {}).name).filter(Boolean).join(', ');
-          return `<button class="row dist-cat" data-a="meta" data-id="${m.id}"><span class="dot" style="background:${m.color || 'var(--accent)'}"></span><span class="grow"><b>${esc(m.name)}</b><small>${m.kind === 'saving' ? 'Meta de acumulação' : 'Meta de despesas'}${links ? ` · ${esc(links)}` : ''}</small></span><b>${pctTxt(pct)}%</b></button>`;
+          return `<button class="row dist-cat" data-a="meta" data-id="${m.id}"><span class="dot" style="background:${m.color || 'var(--accent)'}"></span><span class="grow"><b>${esc(m.name)}</b><small>${m.kind === 'saving' ? 'Meta de acumulação' : 'Meta de despesas'} · ${mode === 'value' ? 'por valor' : 'por percentual'}${links ? ` · ${esc(links)}` : ''}</small></span><b>${allocationLabel}</b></button>`;
         }).join('') || '<p class="hint">Crie uma Meta de despesas ou de acumulação para vinculá-la à bolacha.</p>'}</div>
         ${invest < B.GUIDE.investMin ? `<p class="hint">Referência opcional: destinar ${B.GUIDE.investIdeal}% à acumulação/investimentos, tentando manter pelo menos ${B.GUIDE.investMin}% em períodos mais apertados.</p>` : ''}
         <p class="hint">Metas de receita definem e acompanham os recebimentos que formam a base de 100%. Metas de despesas e de acumulação definem os segmentos da distribuição. Tags continuam pertencendo às suas Metas.</p>`;
@@ -1241,16 +1260,24 @@ function savingHint(v) {
   return `<b>Guardar ${C.money(plan.perPeriod)} por ${u}</b> · ${plan.periods} ${u === 'mês' ? (plan.periods === 1 ? 'mês' : 'meses') : u === 'dia' ? 'dias' : u + (plan.periods === 1 ? '' : 's')} até ${C.dmy(v.deadline)}${plan.saved ? ` · já guardado ${C.money(plan.saved)}` : ''} (sem rendimento).`;
 }
 function metaForm(m = null) {
-  const value = m ? { ...m, allocationPct: B.metaDistributionPct(m, budgetCfg().legacyModel, [...S().metas.values()]), tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, allocationPct: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '' };
+  const allMetas = [...S().metas.values()], legacyPct = m ? B.metaDistributionPct(m, budgetCfg().legacyModel, allMetas) : 0;
+  const legacyMode = m ? (m.allocationMode || (legacyPct > 0 ? 'percent' : 'value')) : 'percent';
+  const value = m ? { ...m,
+      allocationMode: legacyMode,
+      allocationPct: legacyMode === 'percent' ? (legacyPct || Number(m.allocationPct || 0)) : Number(m.allocationPct || 0),
+      allocationValue: m.allocationValue != null ? m.allocationValue : (legacyMode === 'value' && m.kind !== 'saving' ? (m.amount || 0) : 0),
+      tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
+    : { name: '', kind: 'expense', period: 'month', amount: 0, allocationMode: 'percent', allocationPct: 0, allocationValue: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '' };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
     fields: [
       { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Alimentação' },
       { k: 'kind', label: 'Tipo', type: 'select', options: [['expense', 'Limite de gastos'], ['income', 'Meta de receita'], ['saving', 'Acumulação (juntar até uma data)']] },
-      { k: 'allocationPct', label: 'Percentual da renda destinado a esta Meta (%)', type: 'number', min: 0, max: 100, show: v => v.kind !== 'income' },
-      { hint: 'Esse percentual faz esta própria Meta compor a bolacha de distribuição da renda. Não existe cadastro separado de categoria.', show: v => v.kind !== 'income' },
+      { k: 'allocationMode', label: 'Como definir a participação na bolacha', type: 'select', options: [['percent', 'Por porcentagem da renda'], ['value', 'Por valor em dinheiro'],], show: v => v.kind !== 'income' },
+      { k: 'allocationPct', label: 'Percentual da renda destinado a esta Meta (%)', type: 'decimal', min: 0, max: 100, show: v => v.kind !== 'income' && v.allocationMode === 'percent' },
+      { k: 'allocationValue', label: 'Valor destinado a esta Meta', type: 'money', show: v => v.kind !== 'income' && v.allocationMode === 'value' },
+      { hint: 'A Meta continua sendo a fonte da configuração. Para despesas, o valor acompanha o período da própria Meta; para acumulação, é considerado mensal. A bolacha converte o valor em percentual da renda.', show: v => v.kind !== 'income' },
       // ---- acumulação: quanto juntar, até quando e com que frequência; o app calcula quanto guardar por período
       { k: 'amount', label: 'Quanto quer juntar', type: 'money', show: v => v.kind === 'saving' },
       { k: 'deadline', label: 'Até quando', type: 'date', show: v => v.kind === 'saving' },
@@ -1288,8 +1315,14 @@ function metaForm(m = null) {
     onSave: async v => {
       const { originsTxt, ...rest } = v;
       const allocationPct = Number(rest.allocationPct ?? 0);
-      if (rest.kind !== 'income' && (!Number.isFinite(allocationPct) || allocationPct < 0 || allocationPct > 100)) { C.toast('O percentual da Meta deve ficar entre 0 e 100.'); return false; }
-      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, allocationPct: rest.kind === 'income' ? null : allocationPct, onlyAssigned: true, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
+      const allocationValue = Number(rest.allocationValue ?? 0);
+      if (rest.kind !== 'income' && rest.allocationMode === 'percent' && (!Number.isFinite(allocationPct) || allocationPct < 0 || allocationPct > 100)) { C.toast('O percentual da Meta deve ficar entre 0 e 100.'); return false; }
+      if (rest.kind !== 'income' && rest.allocationMode === 'value' && (!Number.isFinite(allocationValue) || allocationValue < 0)) { C.toast('Informe um valor válido para a Meta.'); return false; }
+      const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest,
+        allocationMode: rest.kind === 'income' ? null : (rest.allocationMode || 'percent'),
+        allocationPct: rest.kind === 'income' ? null : allocationPct,
+        allocationValue: rest.kind === 'income' ? null : allocationValue,
+        onlyAssigned: true, origins: String(originsTxt || '').split(',').map(s => s.trim()).filter(Boolean) };
       if (obj.kind === 'saving') {
         if (!obj.amount || !obj.deadline) { C.toast('Informe quanto quer juntar e até quando'); return false; }
         obj.freq = obj.freq || 'month'; obj.start = obj.start || C.today(); obj.tagIds = []; obj.period = 'custom';
@@ -1310,6 +1343,7 @@ function metaForm(m = null) {
       if (obj.showOnCalendar) for (const o of S().metas.values()) if (o.id !== obj.id && o.showOnCalendar) await saveStore('metas', 'metas', { ...o, showOnCalendar: false });
       await saveStore('metas', 'metas', obj);
       C.toast(m ? 'Meta atualizada' : 'Meta criada');
+      return true;
     },
     onDelete: m && (async () => {
       if (!(await C.confirmDlg('Excluir meta?', 'Os lançamentos não são afetados.', 'Excluir', 'danger'))) return false;

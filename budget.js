@@ -56,9 +56,10 @@ export function budgetConfig(settings = {}) {
   };
 }
 
-/** Recupera o percentual de modelos antigos apenas como migração de leitura. */
+/** Recupera o percentual configurado na Meta ou migra o vínculo de versões antigas. */
 export function metaDistributionPct(meta, legacyModel = null, allMetas = []) {
-  if (meta && meta.allocationPct != null && Number.isFinite(+meta.allocationPct)) return Math.max(0, Math.min(100, +meta.allocationPct));
+  if (meta && meta.allocationMode === 'percent') return Math.max(0, Math.min(100, Number(meta.allocationPct) || 0));
+  if (meta && meta.allocationMode === 'value') return 0; // percentual calculado dinamicamente sobre a renda do período
   const cats = (legacyModel && legacyModel.cats || []).filter(c => !c.archived);
   let total = 0;
   for (const c of cats) {
@@ -69,22 +70,42 @@ export function metaDistributionPct(meta, legacyModel = null, allMetas = []) {
     if (matched.length) {
       const peers = allMetas.filter(m => !m.archived && (m.tagIds || []).some(id => (c.tagIds || []).includes(id))).length || 1;
       total += (+c.pct || 0) / peers;
+      continue;
     }
+    // Migração adicional: versões antigas podiam guardar o nome da fatia sem gravar o vínculo por ID.
+    const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+    if (!(mids.length || (c.tagIds || []).length || (c.piggyIds || []).length) && norm(c.name) && norm(c.name) === norm(meta.name)) total += (+c.pct || 0);
   }
-  return Math.max(0, Math.min(100, total));
+  // Compatibilidade: metas antigas podem ter recebido allocationPct=0 no primeiro patch,
+  // embora o percentual original ainda exista no modelo legado. O legado tem prioridade.
+  if (total > 0) return Math.max(0, Math.min(100, total));
+  const explicit = Number(meta && meta.allocationPct);
+  return Number.isFinite(explicit) ? Math.max(0, Math.min(100, explicit)) : 0;
 }
 
-/** Constrói a bolacha diretamente das Metas. Não cria categorias paralelas. */
+/** Constrói a bolacha diretamente das Metas, preservando valor ou percentual na própria Meta. */
 export function modelFromMetas(metas = [], legacyModel = null) {
   const list = metas.filter(m => !m.archived && (m.kind || 'expense') !== 'income');
   return {
     id: 'metas-linked', name: 'Metas cadastradas',
     deduction: (legacyModel && legacyModel.deduction) || { on: false, mode: 'value', value: 0 },
-    cats: list.map(m => ({
-      id: m.id, metaId: m.id, name: m.name, pct: metaDistributionPct(m, legacyModel, metas),
-      color: m.color || '#8cb6e4', kind: m.kind === 'saving' ? 'save' : 'spend',
-      metaIds: [m.id], tagIds: [], piggyIds: m.kind === 'saving' && m.piggyId ? [m.piggyId] : [], archived: false,
-    })),
+    cats: list.map(m => {
+      const legacyPct = metaDistributionPct(m, legacyModel, metas);
+      const allocationMode = m.allocationMode || (legacyPct > 0 ? 'percent' : 'value');
+      // Nas metas antigas de despesa, o limite já cadastrado é reaproveitado como valor da distribuição.
+      // Metas de acumulação mantêm seu objetivo total separado do valor mensal destinado à bolacha.
+      const allocationValue = m.allocationValue != null ? Number(m.allocationValue) || 0
+        : (allocationMode === 'value' && m.kind !== 'saving' ? Number(m.amount) || 0 : 0);
+      return {
+        id: m.id, metaId: m.id, name: m.name,
+        pct: allocationMode === 'percent' ? legacyPct : 0,
+        allocationMode, allocationValue,
+        allocationPeriod: m.kind === 'saving' ? 'month' : (m.period || 'month'),
+        allocationFrom: m.from || null, allocationTo: m.to || null,
+        color: m.color || '#8cb6e4', kind: m.kind === 'saving' ? 'save' : 'spend',
+        metaIds: [m.id], tagIds: [], piggyIds: m.kind === 'saving' && m.piggyId ? [m.piggyId] : [], archived: false,
+      };
+    }),
   };
 }
 export const activeModelOf = cfg => cfg.legacyModel || { id: 'metas-linked', name: 'Metas cadastradas', deduction: cfg.deduction, cats: [] };
@@ -173,7 +194,13 @@ export function distribution({ data, model, ids, from, to, metas = [], piggies =
   const dedP = Math.min(incP, dedOf(incP)), dedR = Math.min(incR, d.mode === 'percent' ? dedOf(incR) : dedP);
   const baseP = incP - dedP, baseR = incR - dedR;
   for (const c of cats) {
-    c.target = Math.round(baseP * c.pct / 100); // quanto o plano destina (sobre a renda prevista)
+    if (c.allocationMode === 'value') {
+      // Valor definido na Meta acompanha o período da própria Meta; acumulação usa valor mensal.
+      c.target = rangeLimit({ period: c.allocationPeriod || 'month', amount: Math.max(0, Number(c.allocationValue) || 0), from: c.allocationFrom, to: c.allocationTo }, from, to);
+      c.pct = baseP > 0 ? c.target / baseP * 100 : 0;
+    } else {
+      c.target = Math.round(baseP * c.pct / 100); // percentual configurado na própria Meta
+    }
     c.used = c.realized; // realizado: gasto pago ou depósito feito
     c.left = Math.max(0, c.target - c.realized);
     c.over = Math.max(0, c.realized - c.target);
@@ -181,7 +208,7 @@ export function distribution({ data, model, ids, from, to, metas = [], piggies =
     c.realPct = baseP ? c.realized / baseP * 100 : 0;
     c.status = c.over ? (c.kind === 'save' ? 'ahead' : 'over') : c.plannedOver && c.kind !== 'save' ? 'risk' : 'ok';
   }
-  const pc = pctCheck(model);
+  const pc = pctCheck({ cats });
   return {
     from, to, income: { planned: incP, received: incR }, deduction: { planned: dedP, received: dedR, on: !!d.on },
     base: { planned: baseP, received: baseR }, cats, other, otherSaved, pct: pc,
