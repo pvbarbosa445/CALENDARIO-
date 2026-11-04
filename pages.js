@@ -142,7 +142,8 @@ function bal() {
   return C.F.balances({ data: S().data, accounts: C.accountsList(true), piggies: [...S().piggies.values()], today: t, planUpto: iso(y, m, daysInMonth(y, m)) });
 }
 const tagOptions = kind => () => C.tagsSorted().filter(t => !kind || t.kind === 'both' || t.kind === kind).map(t => [t.id, t.name, C.tagColor(t)]);
-const accOptions = () => C.accountsList().map(a => [a.id, a.name, a.color]);
+// contas "de verdade" (o Tesouro e os cofrinhos em conta separada não entram como conta de uma meta)
+const accOptions = () => C.accountsList().filter(a => a.type !== 'treasury' && a.type !== 'piggy').map(a => [a.id, a.name, a.color]);
 function stat(label, value, cls = '', big = false) { return `<div class="${big ? 'big' : ''}"><small>${label}</small><b class="${cls}">${value}</b></div>`; }
 function progress(pct, color, over) { return `<div class="progress${over ? ' over' : ''}"><i style="width:${Math.min(100, Math.max(0, pct * 100)).toFixed(1)}%;background:${color}"></i></div>`; }
 function row({ a, id, dot, t, s, v, vs, cls = '' }) {
@@ -1202,7 +1203,7 @@ function metaForm(m = null) {
   const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
     : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '', basis: 'value', pct: null };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
-  return formView({
+  const view0 = formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
     fields: [
       { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Alimentação' },
@@ -1223,14 +1224,14 @@ function metaForm(m = null) {
       { k: 'from', label: 'De', type: 'date', show: v => v.period === 'custom' && v.kind !== 'saving' },
       { k: 'to', label: 'Até', type: 'date', show: v => v.period === 'custom' && v.kind !== 'saving' },
       { k: 'amount', label: v => (v.kind === 'income' ? 'Quanto quer receber' : 'Limite de gastos'), type: 'money', show: v => v.kind === 'income' || (v.kind === 'expense' && v.basis !== 'percent') },
-      { hint: 'Pode deixar em branco e definir depois: a meta já acompanha o que foi gasto.', show: v => !v.amount && v.kind !== 'saving' && v.basis !== 'percent' },
+      { hint: v => (v.kind === 'income' ? 'Quanto você espera receber dessa fonte no período (ex.: salário R$ 3.000 por mês). Entra na receita da bolacha mesmo antes do lançamento. Em branco = só acompanhar.' : 'Em branco = só acompanhar o que foi gasto.'), show: v => !v.amount && v.kind !== 'saving' && v.basis !== 'percent' },
       { k: 'color', label: 'Cor', type: 'color' },
       { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch', show: v => v.kind !== 'saving' },
       { section: 'O que entra na meta', show: v => v.kind !== 'saving' },
-      { k: 'tagIds', label: 'Tags desta meta (cada tag fica em uma meta só)', type: 'multi', options: () => tagOptions(null)(), show: v => v.kind !== 'saving' },
-      { hint: 'Os lançamentos entram na meta pela tag ou quando são lançados direto na meta, sem tag.', show: v => v.kind !== 'saving' },
-      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: uma meta só para a conta de trabalho', type: 'multi', options: accOptions, show: v => C.accountsList().length > 1 && v.kind !== 'saving' },
-      { k: 'originsTxt', label: 'Origens', placeholder: 'Ex.: iFood, Salário CLT', show: v => v.kind === 'income' },
+      { k: 'tagIds', label: 'Tags desta meta', type: 'multi', options: () => tagOptions(view0.vals.kind === 'income' ? 'income' : 'expense')(), show: v => v.kind !== 'saving' },
+
+      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas)', type: 'multi', options: accOptions, show: v => C.accountsList().length > 1 && v.kind !== 'saving' },
+      { k: 'originsTxt', label: 'Origens (opcional)', placeholder: 'Ex.: Salário, Freelas', show: v => v.kind === 'income' },
       { section: 'Sobras e excedentes', show: v => daily(v) && v.kind === 'expense' },
       { k: 'rollover', label: 'Valor não usado', type: 'select', options: Object.entries(ROLLOVER), show: v => daily(v) && v.kind === 'expense' },
       { k: 'carryExcess', label: 'Excedente desconta dos próximos dias', type: 'switch', show: v => daily(v) && v.kind === 'expense' && (v.rollover === 'week' || v.rollover === 'month') },
@@ -1277,6 +1278,7 @@ function metaForm(m = null) {
       return true;
     }),
   });
+  return view0;
 }
 
 // ------------------------------------------------------------------ RELATÓRIOS
