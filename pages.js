@@ -968,14 +968,17 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
   // o que sobra da receita depois das metas fica em VERDE (economia). Gastar além da meta "come" o verde.
   const usedPlan = segs.reduce((s, x) => s + x.size, 0);
   const saveLeft = Math.max(0, base - usedPlan);
-  if (saveLeft > 0) segs.push({ col: '#45cf7f', size: saveLeft, strong: saveLeft, over: 0, free: true });
+  // o verde só "enche" com o que já sobrou de verdade: receita confirmada − gastos/guardados confirmados
+  const spentNow = d.segs.reduce((s, x) => s + Math.max(0, x.realized), 0) + Math.max(0, d.other.realized);
+  const saveNow = Math.max(0, Math.min(saveLeft, (d.base.received || 0) - spentNow));
+  if (saveLeft > 0) segs.push({ col: '#45cf7f', size: saveLeft, strong: saveNow, over: 0, free: true });
   const T = Math.max(base, segs.reduce((s, x) => s + x.size, 0)) || 1;
   const r = 78, Cc = 2 * Math.PI * r, n = segs.filter(x => x.size > 0).length;
   let off = 0, svg = '';
   const circ = (col, dash, offset, op) => `<circle cx="110" cy="110" r="${r}" fill="none" stroke="${col}" stroke-width="28" stroke-dasharray="${dash} ${Cc - dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 110 110)" opacity="${op}"/>`;
   // tocar num pedaço mostra no centro qual é a Meta (como no app antigo); tocar de novo ou no centro volta à receita
   const segInfo = x => {
-    if (x.free) return { n: 'Economia', v: money(saveLeft), t: `${Math.round(saveLeft / (base || 1) * 100)}% da receita`, id: 'eco' };
+    if (x.free) return { n: 'Economia', v: money(saveNow), t: `de ${money(saveLeft)} · ${String(Math.round(saveLeft / (base || 1) * 1000) / 10).replace('.', ',')}% da receita`, id: 'eco' };
     const s = x.id ? d.segs.find(k => k.meta.id === x.id) : null;
     const real = Math.max(0, x.strong), tgt = s ? s.target : d.other.planned;
     const share = base ? String(Math.round(tgt / base * 1000) / 10).replace('.', ',') : 0;
@@ -1007,7 +1010,10 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
       <span class="bm-l3"><span>${target ? `de ${money(target)}${cfg.showLegendValues ? ` · ${String(share).replace('.', ',')}% da receita` : ''}` : save ? 'acumulação' : 'sem valor definido'}</span><span>${restTxt}</span></span>
     </button>`;
   }).join('');
-  const ecoRow = base ? `<div class="bm-row bm-eco" data-seg="eco"><span class="bm-l1"><i style="background:#45cf7f"></i><span class="grow">Economia</span><b class="pos">${money(saveLeft)}</b><small>${base ? Math.round(saveLeft / base * 100) : 0}%</small></span></div>` : '';
+  const ecoPct = saveLeft ? Math.round(saveNow / saveLeft * 100) : 0;
+  const ecoRow = base ? `<div class="bm-row bm-eco" data-seg="eco"><span class="bm-l1"><i style="background:#45cf7f"></i><span class="grow">Economia</span><b class="pos">${money(saveNow)}</b><small>${ecoPct}%</small></span>
+      <span class="bm-bar"><i style="width:${Math.min(100, ecoPct)}%;background:#45cf7f"></i></span>
+      <span class="bm-l3"><span>de ${money(saveLeft)} · ${String(Math.round(saveLeft / base * 1000) / 10).replace('.', ',')}% da receita</span><span>recebido <b>${money(d.base.received || 0)}</b></span></span></div>` : '';
   const warn = d.excess > 0 || (base && !saveLeft) ? `<p class="bm-warn">As metas passam da receita${d.excess ? ` em ${money(d.excess)}` : ''}.</p>` : '';
   if (!base && !list.length) return '<div class="empty donut-empty">Nenhuma receita nem meta nesta conta.</div>';
   return `<div class="donut"><svg viewBox="0 0 220 220" role="img" aria-label="Metas sobre 100% da receita">
@@ -1015,7 +1021,7 @@ function rendaBolacha(cfg, d, act = 'd', metas = []) {
       <circle class="bm-hole" cx="110" cy="110" r="62" fill="transparent" stroke="none"/>
       <text class="bm-c1" x="110" y="100" text-anchor="middle" fill="#A5ACB8" font-size="11">receita</text>
       <text class="bm-c2" x="110" y="122" text-anchor="middle" fill="#F5F5F5" font-size="${money(base).length > 11 ? 18 : 21}" font-weight="700">${esc(money(base))}</text>
-      <text class="bm-c3" x="110" y="142" text-anchor="middle" fill="${saveLeft > 0 ? '#45cf7f' : '#ff5f57'}" font-size="12" font-weight="600">${saveLeft > 0 ? `sobra ${esc(money(saveLeft))}` : 'sem sobra'}</text>
+      <text class="bm-c3" x="110" y="142" text-anchor="middle" fill="${saveLeft > 0 ? '#45cf7f' : '#ff5f57'}" font-size="11" font-weight="600">${saveLeft > 0 ? `sobra ${esc(money(saveNow))} de ${esc(money(saveLeft))}` : 'sem sobra'}</text>
     </svg></div>${warn}
     <div class="bm-list">${rows}${ecoRow}</div>
     ${d.deduction.planned ? `<p class="bm-note">Doações antes da divisão: ${money(d.deduction.planned)}</p>` : ''}`;
@@ -1034,7 +1040,7 @@ function bolachaTap(ev) {
   if (!g || same) {
     svg.classList.remove('picked');
     t(1).textContent = svg.dataset.d1; t(2).textContent = svg.dataset.d2; t(3).textContent = svg.dataset.d3;
-    t(2).setAttribute('font-size', svg.dataset.f2); t(3).setAttribute('fill', svg.dataset.c3); t(3).setAttribute('font-size', '12');
+    t(2).setAttribute('font-size', svg.dataset.f2); t(3).setAttribute('fill', svg.dataset.c3); t(3).setAttribute('font-size', '11');
     return;
   }
   g.classList.add('on'); svg.classList.add('picked');

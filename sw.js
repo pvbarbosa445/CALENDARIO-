@@ -1,7 +1,7 @@
 // Service Worker: mantém os arquivos do app disponíveis offline.
 // Ele NUNCA toca no IndexedDB — atualizar o código não apaga os dados do aparelho.
 // Ao publicar uma nova versão no GitHub, aumente VERSION para forçar a atualização do cache.
-const VERSION = '2.6.3';
+const VERSION = '2.6.4';
 const CACHE = `fincal-${VERSION}`;
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './app.css',
