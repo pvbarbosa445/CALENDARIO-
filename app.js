@@ -8,7 +8,7 @@ import * as pages from './pages.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '1.9.2';
+export const APP_VERSION = '1.9.4';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -48,7 +48,7 @@ const DEFAULTS = {
   showTransfers: true, hiddenAccounts: [], activeAccount: null, defaultAccount: null, panels: {}, alerts: {}, lastBackup: null,
   basis: 'planned', carry: false, initialBalance: 0, startDate: null,
   mondayFirst: false, holState: '', holCity: '', holOptional: false, customHolidays: [], disabledHolidays: [],
-  summaryOpen: false, calExpanded: false,
+  summaryOpen: false, calExpanded: false, menuPos: null,
 };
 const S = {
   entries: new Map(), overrides: new Map(), checks: new Map(), tags: new Map(),
@@ -463,10 +463,12 @@ function renderGrid(anim) {
       if (maxLines) inner += dayLines(day, maxLines);
       const colors = new Map();
       for (const it of day.items) {
-        if (!it.tagId || !countsPlanned(it) || !accVisible(it) || !passesFilters(it)) continue;
+        if (!countsPlanned(it) || !accVisible(it) || !passesFilters(it)) continue;
+        // lançamento direto na meta (sem tag, ex.: Lazer nos fins de semana e feriados) mostra a cor da meta
+        if (!it.tagId && !it.splits) { if (it.metaId && S.metas.get(it.metaId)) colors.set(`meta:${it.metaId}`, chipColor(itemColor(it))); continue; }
         for (const tid of it.splits ? it.splits.map(p => p.tagId) : [it.tagId]) {
           const tg = tag(tid);
-          if (tg && !hidden.has(tg.id)) colors.set(tg.id, tagColor(tg));
+          if (tg && !hidden.has(tg.id)) colors.set(tg.id, chipColor(tagColor(tg)));
         }
       }
       inner += `<span class="tags">${[...colors.values()].slice(0, 4).map(c => `<i style="background:${c}"></i>`).join('')}</span>`;
@@ -1487,6 +1489,52 @@ function renderTagList() {
     : '<div class="row"><span class="muted">Nenhuma tag</span></div>';
 }
 
+// ---------- Botão do menu flutuante (uso com uma mão só) ----------
+/** Coloca o botão na posição guardada (ou logo acima do +), sempre dentro da tela. */
+function placeMenuFab() {
+  const b = $('#fabMenu'); if (!b) return;
+  const p = S.settings.menuPos;
+  if (!p || isWide()) { b.style.left = b.style.top = ''; b.classList.remove('moved'); return; }
+  const w = b.offsetWidth || 46, h = b.offsetHeight || 46;
+  const x = Math.min(window.innerWidth - w - 6, Math.max(6, p.x * window.innerWidth));
+  const y = Math.min(window.innerHeight - h - 6, Math.max(6, p.y * window.innerHeight));
+  b.style.left = x + 'px'; b.style.top = y + 'px'; b.classList.add('moved');
+}
+/** Toque abre o menu; segurar e arrastar move o botão (a posição fica guardada). */
+function bindMenuFab(open) {
+  const b = $('#fabMenu'); if (!b) return;
+  let st = null;
+  b.addEventListener('pointerdown', e => {
+    const r = b.getBoundingClientRect();
+    st = { x: e.clientX, y: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    try { b.setPointerCapture(e.pointerId); } catch (_) { /* toque simulado */ }
+  });
+  b.addEventListener('pointermove', e => {
+    if (!st) return;
+    if (!st.moved && Math.hypot(e.clientX - st.x, e.clientY - st.y) < 8) return;
+    st.moved = true;
+    b.classList.add('moved', 'dragging');
+    const w = b.offsetWidth, h = b.offsetHeight;
+    b.style.left = Math.min(window.innerWidth - w - 6, Math.max(6, e.clientX - st.dx)) + 'px';
+    b.style.top = Math.min(window.innerHeight - h - 6, Math.max(6, e.clientY - st.dy)) + 'px';
+  });
+  const end = e => {
+    if (!st) return;
+    const moved = st.moved; st = null;
+    b.classList.remove('dragging');
+    if (moved) {
+      const r = b.getBoundingClientRect();
+      S.settings.menuPos = { x: r.left / window.innerWidth, y: r.top / window.innerHeight };
+      saveSettings();
+    } else if (e.type === 'pointerup') open();
+  };
+  b.addEventListener('pointerup', end);
+  b.addEventListener('pointercancel', end);
+  b.addEventListener('click', e => e.preventDefault());
+  window.addEventListener('resize', placeMenuFab);
+  placeMenuFab();
+}
+
 // ---------- Menu lateral ----------
 function syncDrawer() {
   const s = S.settings;
@@ -1580,7 +1628,9 @@ async function wipeAll() {
 function bind() {
   // engrenagem do menu: abre as Configurações (tags, calendário, painéis, alertas, feriados, dados)
   $('#btnSettings').onclick = async () => { await closeAll(); syncDrawer(); storageInfo(); openLayer($('#settingsSheet')); };
-  $('#btnMenu').onclick = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
+  const openMenu = () => { syncDrawer(); storageInfo(); openLayer($('#drawer')); };
+  $('#btnMenu').onclick = openMenu;
+  bindMenuFab(openMenu);
   $('#btnPrev').onclick = () => goMonth(-1);
   $('#btnNext').onclick = () => goMonth(1);
   $('#btnToday').onclick = goToday;

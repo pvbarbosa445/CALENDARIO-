@@ -832,3 +832,27 @@ html, body, .topbar { background: var(--bg); }
 .cell .ln.done { opacity: .5; }
 .cell .ln.more { background: none; padding-left: 3px; }
 @media (max-width: 599px) { .cell .ln { padding: 0 2px 0 6px; } }
+
+/* =================== v1.9.4 — menu flutuante (uma mão só), aba pela direita, fim de semana =================== */
+/* fim de semana e feriado: quadrado igual aos dias normais; só o número azul-claro diferencia
+   (o cinza mais escuro confundia com os dias de outro mês) */
+.cell.wkend:not(.out), .cell.hol:not(.out), .cell.hol.wkend:not(.out), .cell.sel.wkend { background: var(--cell); }
+@media (min-width: 1100px) { .cell.wkend:not(.out):hover { background: #1A1A1A; } }
+.cell.wkend .num, .cell.sun .num, .cell.hol .num, .cell.hol.wkend .num, .cell.hol.sun .num { color: var(--accent); }
+.cell.out .num, .cell.out.wkend .num, .cell.out.hol .num { color: #545454; }
+.cell.today .num, .cell.today.wkend .num, .cell.today.hol .num { color: #000000; }
+
+/* botão do menu: flutuante, acima do +, no celular */
+.fab-menu { width: 46px; height: 46px; right: 22px; bottom: calc(20px + 54px + 14px + var(--bottom)); touch-action: none; user-select: none; -webkit-user-select: none; }
+.fab-menu svg { width: 22px; height: 22px; }
+.fab-menu.moved { right: auto; bottom: auto; }
+.fab-menu.dragging { transform: scale(1.08); box-shadow: 0 6px 18px rgba(0, 0, 0, .5), inset 0 0 0 1px #3A3B3D; transition: none; }
+body.selecting .fab-menu { opacity: 0; pointer-events: none; }
+@media (max-width: 1099px) {
+  #btnMenu { display: none; }
+  .topbar { padding-left: 14px; }
+  /* aba lateral pela direita, no alcance do polegar */
+  .drawer { left: auto; right: 0; border-radius: 20px 0 0 20px; transform: translateX(102%); }
+  .drawer.on { transform: none; }
+}
+@media (min-width: 1100px) { .fab-menu { display: none; } }
