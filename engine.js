@@ -21,9 +21,15 @@ export const RULES = {
 const HOLIDAY_AWARE = new Set(['businessDays', 'weekends', 'holidays', 'weekendsHolidays', 'nthBusinessDay']);
 const PAD = 12; // folga de dias para ocorrências transferidas entre meses
 
+/** Dias da semana considerados úteis (0 = domingo … 6 = sábado). Padrão: segunda a sexta. Configurável. */
+let WORKDAYS = new Set([1, 2, 3, 4, 5]);
+export function setWorkdays(days) { WORKDAYS = new Set((days && days.length ? days : [1, 2, 3, 4, 5]).map(Number)); }
+export const getWorkdays = () => [...WORKDAYS].sort();
+
 export function isBusinessDay(d, isHoliday, saturday = false) {
   const w = weekday(d);
-  if (w === 0 || (w === 6 && !saturday)) return false;
+  if (w === 6 && saturday) return !isHoliday(d); // "contar sábado" de uma recorrência específica
+  if (!WORKDAYS.has(w)) return false;
   return !isHoliday(d);
 }
 

@@ -1,14 +1,15 @@
 // Calendário Financeiro — interface (Etapa 2)
 import * as db from './db.js';
-import { createCalculator, RULES, attrsAt, occKey, itemsInRange, flowOf } from './engine.js';
-import { makeHolidayLookup, LOCALES, holidayNames } from './holidays.js';
+import { createCalculator, RULES, attrsAt, occKey, itemsInRange, flowOf, setWorkdays } from './engine.js';
+import { makeHolidayLookup, LOCALES, holidayNames, UFS } from './holidays.js';
 import * as ops from './ops.js';
 import * as F from './finance.js';
 import * as pages from './pages.js';
+import * as onboarding from './onboarding.js';
 import { icon, hydrateIcons } from './icons.js';
 import { iso, parse, addMonths, todayISO, weekday, addDays, daysInMonth, MONTHS, WEEKDAYS_SHORT, WEEKDAYS_LONG } from './dates.js';
 
-export const APP_VERSION = '2.3.0';
+export const APP_VERSION = '2.4.0';
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -20,7 +21,9 @@ const dmy = d => `${d.slice(8)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 const cap = s => s[0].toUpperCase() + s.slice(1);
 
 // ---------- Dinheiro (centavos inteiros) ----------
-const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+let BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+/** Moeda escolhida no perfil (padrão: real). */
+function setCurrency(code) { try { BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: code || 'BRL' }); } catch { BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }); } }
 const INT = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
 const DEC1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
 const money = c => BRL.format(c / 100);
@@ -156,6 +159,8 @@ const tagsSorted = () => [...S.tags.values()].sort((a, b) => (a.order ?? 0) - (b
 
 function rebuild() {
   const s = S.settings;
+  setWorkdays(s.workdays); // dias úteis do perfil (padrão: segunda a sexta)
+  setCurrency((s.profile || {}).currency);
   S.isHoliday = makeHolidayLookup({ state: s.holState, city: s.holCity, optional: s.holOptional, custom: s.customHolidays, disabled: s.disabledHolidays });
   S.data = { entries: [...S.entries.values()], overrides: S.overrides, isHoliday: S.isHoliday, defaultAccount: s.defaultAccount };
   S.set = visibleAccounts();
@@ -169,6 +174,7 @@ const SETTING_NAMES = {
   showTransfers: 'Transferências e cofrinhos', hiddenAccounts: 'Contas no calendário', activeAccount: 'Conta exibida', basis: 'Previsto/realizado', carry: 'Acumular meses',
   startDate: 'Início do saldo', mondayFirst: 'Início da semana', holState: 'Feriados estaduais', holCity: 'Feriados municipais',
   holOptional: 'Pontos facultativos', customHolidays: 'Feriados próprios', disabledHolidays: 'Feriados ligados', panels: 'Painéis', alerts: 'Alertas', defaultAccount: 'Conta principal',
+  workdays: 'Dias úteis', profile: 'Perfil',
 };
 let lastSaved = null;
 function saveSettings() {
@@ -1764,6 +1770,16 @@ function syncDrawer() {
   $('#rowTransfers').hidden = !multiAcc();
   $('#startDate').value = s.startDate || '';
   $$('.carry-only').forEach(el => { el.hidden = !s.carry; });
+  const pf = s.profile || {};
+  if ($('#pfName')) {
+    $('#pfName').value = pf.name || '';
+    $('#pfCurrency').value = pf.currency || 'BRL';
+    const wd = (s.workdays || [1, 2, 3, 4, 5]).join(',');
+    const custom = s.wdCustom || !['1,2,3,4,5', '1,2,3,4,5,6'].includes(wd);
+    $('#pfWorkdays').value = custom ? 'custom' : wd;
+    $('#pfWdChips').hidden = !custom;
+    $('#pfWdChips').innerHTML = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((w, d) => `<button type="button" class="chip${(s.workdays || [1, 2, 3, 4, 5]).includes(d) ? ' on' : ''}" data-wd="${d}">${w}</button>`).join('');
+  }
   $('#holState').value = s.holState;
   $('#holCity').value = s.holCity;
   const P = { accounts: 'Contas', metas: 'Metas', pending: 'Pendências', upcoming: 'Próximos 7 dias', piggies: 'Cofrinhos' };
@@ -2086,6 +2102,23 @@ function bind() {
     if (S.selected && dayVisible()) renderDay(S.selected);
   });
   $('#btnSample').onclick = loadSample;
+  // perfil: nome, moeda e dias úteis (valem para todo o app)
+  if ($('#pfName')) {
+    $('#pfName').addEventListener('change', e => { S.settings.profile = { ...(S.settings.profile || {}), name: e.target.value.trim() }; saveSettings(); });
+    $('#pfCurrency').addEventListener('change', e => { S.settings.profile = { ...(S.settings.profile || {}), currency: e.target.value }; saveSettings(); rebuild(); refresh(); renderHeader(); });
+    $('#pfWorkdays').addEventListener('change', e => {
+      if (e.target.value === 'custom') { S.settings.wdCustom = true; } else { S.settings.wdCustom = false; S.settings.workdays = e.target.value.split(',').map(Number); }
+      saveSettings(); rebuild(); refresh(); syncDrawer();
+    });
+    $('#pfWdChips').addEventListener('click', e => {
+      const b = e.target.closest('[data-wd]'); if (!b) return;
+      const d = +b.dataset.wd, cur = new Set(S.settings.workdays || [1, 2, 3, 4, 5]);
+      cur.has(d) ? cur.delete(d) : cur.add(d);
+      if (!cur.size) return;
+      S.settings.workdays = [...cur].sort(); saveSettings(); rebuild(); refresh(); syncDrawer();
+    });
+  }
+  if ($('#btnOnboarding')) $('#btnOnboarding').onclick = async () => { await closeAll(); onboarding.open(!onboarding.isEmpty()); };
   $('#accSeg').addEventListener('click', e => {
     const b = e.target.closest('[data-acc]'); if (!b) return;
     const id = b.dataset.acc;
@@ -2161,7 +2194,7 @@ function fillStaticSelects() {
   for (let i = 1; i <= 10; i++) nth.push(`<option value="${i}">${i}º dia útil</option>`);
   nth.push('<option value="-1">Último dia útil</option><option value="-2">Penúltimo dia útil</option>');
   $('#fNth').innerHTML = nth.join('');
-  $('#holState').innerHTML = '<option value="">Nenhum</option>' + Object.entries(LOCALES.states).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
+  $('#holState').innerHTML = '<option value="">Nenhum</option>' + Object.entries(UFS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   $('#holCity').innerHTML = '<option value="">Nenhum</option>' + Object.entries(LOCALES.cities).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('');
   $('#appVersion').textContent = `Versão ${APP_VERSION}`;
 }
@@ -2224,6 +2257,7 @@ async function init() {
     toast('Não foi possível abrir o armazenamento local');
   }
   pages.init(ctx());
+  onboarding.init(ctx());
   rebuild();
   renderHeader();
   renderGrid();
@@ -2233,6 +2267,7 @@ async function init() {
   $('#calHandle').classList.toggle('up', isExpanded());
   renderGrid();
   refreshDerived();
+  onboarding.maybeStart(); // primeiro acesso de verdade (app zerado)
   db.requestPersistence();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
 }

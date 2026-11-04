@@ -1266,3 +1266,38 @@ body.alt-on .weekdays, body.alt-on #gridWrap { display: none; }
 .hint.center { text-align: center; }
 .btn-row .primary-btn.sm { flex: 1 1 auto; height: 38px; }
 .btn-row { flex-wrap: wrap; }
+.rep-meta b { font-weight: 600; }
+.rep-tag { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-2); padding: 3px 4px 3px 18px; }
+.mp-part.met i { background: var(--green); }
+
+/* =================== v2.4 — configuração inicial (primeiro acesso) =================== */
+.onb { position: fixed; inset: 0; z-index: 55; background: #010101; display: none; }
+.onb.on { display: block; }
+.onb-in { max-width: 560px; height: 100%; margin: 0 auto; display: flex; flex-direction: column; padding: calc(10px + var(--top)) 18px calc(12px + var(--bottom)); }
+.onb-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0 10px; }
+.onb-top .text-btn { color: var(--text-2); font-size: 14px; }
+.onb-dots { display: flex; gap: 6px; }
+.onb-dots i { width: 8px; height: 8px; border-radius: 50%; background: #2A2A2E; }
+.onb-dots i.done { background: #4f6a80; } .onb-dots i.on { background: var(--accent); width: 20px; border-radius: 4px; }
+.onb-count { font-size: 12px; color: var(--text-2); min-width: 32px; text-align: right; }
+.onb-body { flex: 1 1 auto; overflow-y: auto; padding-bottom: 12px; }
+.onb-body h1 { font-size: 26px; line-height: 1.2; margin: 12px 0 8px; font-weight: 700; letter-spacing: -.3px; }
+.onb-lead { color: var(--text-2); font-size: 15px; line-height: 1.5; margin: 0 0 16px; }
+.onb-hint { color: var(--text-2); font-size: 12.5px; line-height: 1.5; margin: 8px 2px; }
+.onb-sub { font-size: 14px; font-weight: 600; margin: 14px 2px 8px; } .onb-sub small { font-weight: 400; color: var(--text-2); margin-left: 6px; }
+.onb-card { background: #141414; border-radius: 16px; padding: 12px; margin: 10px 0; }
+.onb-card p { margin: 4px 2px; font-size: 14px; line-height: 1.45; }
+.onb-card .onb-sub { margin-top: 2px; }
+.onb-row { display: flex; gap: 10px; align-items: flex-end; }
+.onb-row > .grow, .onb-row .grow { flex: 1 1 0; min-width: 0; }
+.onb-f { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; font-size: 13px; color: var(--text-2); }
+.onb-f input, .onb-f select, .onb-row > input { background: #1E1E1E; border: 1px solid #2A2A2E; border-radius: 12px; color: var(--text); font-size: 15px; padding: 11px 12px; min-width: 0; width: 100%; }
+.onb-check { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 10px 2px 2px; color: var(--text); }
+.onb-add { display: block; width: 100%; padding: 13px; border-radius: 14px; border: 1px dashed #3A3A3C; color: var(--accent); font-weight: 600; margin: 10px 0; background: transparent; }
+.onb-options { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 12px; }
+.onb-options button { text-align: left; padding: 15px 16px; border-radius: 14px; background: #141414; border: 1px solid #222; font-size: 15px; color: var(--text); }
+.onb-options button.on { border-color: var(--accent); background: rgba(169, 212, 245, .08); }
+.onb-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; border-top: 1px solid #1E1E1E; }
+.onb-foot .primary-btn { width: auto; min-width: 120px; padding: 0 18px; }
+.onb .chips { margin: 4px 0 6px; }
+.onb-foot .primary-btn { height: 48px; flex: 0 0 auto; }

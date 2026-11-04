@@ -94,6 +94,15 @@
       <div class="group" id="tagList"></div>
 
       <details class="more">
+        <summary>Perfil</summary>
+        <div class="group">
+          <label class="row field"><span>Nome</span><input type="text" id="pfName" maxlength="40" placeholder="Seu nome"></label>
+          <label class="row field"><span>Moeda</span><select id="pfCurrency"><option value="BRL">Real (R$)</option><option value="USD">Dólar (US$)</option><option value="EUR">Euro (€)</option></select></label>
+          <label class="row field"><span>Dias úteis</span><select id="pfWorkdays"><option value="1,2,3,4,5">Segunda a sexta</option><option value="1,2,3,4,5,6">Segunda a sábado</option><option value="custom">Personalizado</option></select></label>
+        </div>
+        <div class="chips" id="pfWdChips" hidden></div>
+      </details>
+      <details class="more">
         <summary>Calendário e saldo</summary>
         <div class="group">
           <label class="row"><span>Mostrar movimento do dia</span><input type="checkbox" class="switch" data-setting="showMovement"></label>
@@ -127,6 +136,7 @@
           <button class="row action" id="btnExport">Exportar backup</button>
           <button class="row action" id="btnImport">Restaurar backup</button>
           <button class="row action" id="btnInstall" hidden>Instalar app</button>
+          <button class="row action" id="btnOnboarding">Configuração inicial (assistente)</button>
           <button class="row action" id="btnSample">Carregar exemplo</button>
           <button class="row action danger" id="btnWipe">Apagar todos os dados</button>
         </div>

@@ -124,7 +124,7 @@ export function monthSurplus(data, accIds, y, m, piggy, ctx = {}) {
     }
   }
   for (const meta of ctx.metas || []) {
-    if (meta.archived || !meta.amount) continue;
+    if (meta.archived || !meta.amount || meta.kind === 'saving') continue; // acumulação vem dos depósitos reais
     const ids = meta.accountIds && meta.accountIds.length ? meta.accountIds : [ctx.defaultAccount];
     if (!ids.some(id => set.has(id))) continue;
     const L = metaMonthAmount(meta, y, m, ctx.isHoliday);

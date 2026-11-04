@@ -83,7 +83,7 @@ function onInput(e) {
   if (!v.vals) return;
   const k = t.dataset.k, type = t.dataset.type;
   v.vals[k] = type === 'money' ? (C.parseMoney(t.value) || 0) : type === 'switch' ? t.checked : type === 'number' ? (t.value === '' ? null : +t.value) : t.value;
-  if (e.type === 'change' && (type === 'select' || type === 'switch')) render();
+  if (e.type === 'change' && (type === 'select' || type === 'switch' || type === 'money' || t.type === 'date' || type === 'number')) render();
 }
 
 // ------------------------------------------------------------------ formulário genérico
@@ -95,7 +95,7 @@ function fieldsHTML(fields, vals) {
   for (const f of fields) {
     if (f.show && !f.show(vals)) continue;
     if (f.section !== undefined) { closeG(); if (f.section) html += `<div class="group-title">${esc(f.section)}</div>`; continue; }
-    if (f.hint) { closeG(); html += `<p class="hint">${f.hint}</p>`; continue; }
+    if (f.hint) { closeG(); html += `<p class="hint">${typeof f.hint === 'function' ? f.hint(vals) : f.hint}</p>`; continue; }
     const v = vals[f.k];
     const L = esc(f.label);
     openG();
@@ -103,7 +103,7 @@ function fieldsHTML(fields, vals) {
       case 'money': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="money" type="text" inputmode="decimal" placeholder="0,00" value="${v ? moneyInput(v) : ''}"></label>`; break;
       case 'number': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" data-type="number" type="number" inputmode="numeric" value="${v ?? ''}" ${f.min != null ? `min="${f.min}"` : ''}></label>`; break;
       case 'date': html += `<label class="row field"><span>${L}</span><input data-k="${f.k}" type="date" value="${v || ''}"></label>`; break;
-      case 'select': html += `<label class="row field"><span>${L}</span><select data-k="${f.k}" data-type="select">${f.options.map(([ov, ol]) => `<option value="${esc(ov)}" ${String(ov) === String(v ?? '') ? 'selected' : ''}>${esc(ol)}</option>`).join('')}</select></label>`; break;
+      case 'select': html += `<label class="row field"><span>${L}</span><select data-k="${f.k}" data-type="select">${(typeof f.options === 'function' ? f.options() : f.options).map(([ov, ol]) => `<option value="${esc(ov)}" ${String(ov) === String(v ?? '') ? 'selected' : ''}>${esc(ol)}</option>`).join('')}</select></label>`; break;
       case 'switch': html += `<label class="row"><span>${L}</span><input data-k="${f.k}" data-type="switch" type="checkbox" class="switch" ${v ? 'checked' : ''}></label>`; break;
       case 'color': html += `<div class="row col"><span class="muted small">${L}</span><div class="swatches sm">${C.PALETTE.map(c => `<button type="button" data-k="${f.k}" data-color="${c}" class="${c === v ? 'on' : ''}" style="background:${c}"></button>`).join('')}</div></div>`; break;
       case 'multi': {
@@ -924,12 +924,13 @@ function metasView() {
       const all = [...S().metas.values()].filter(C.metaVisible).sort((a, b) => ((a.order ?? 0) - (b.order ?? 0)) || a.name.localeCompare(b.name, 'pt-BR'));
       const bctx = C.budgetCtx();
       const cards = k => all.filter(x => (x.kind || 'expense') === k).map(x => metaCard(x, C.F.metaProgress(C.scopedMeta(x), C.today(), bctx))).join('');
-      const exp = cards('expense'), inc = cards('income');
+      const exp = cards('expense'), inc = cards('income'), sav = all.filter(x => x.kind === 'saving').map(savingCard).join('');
       return `<div class="donut-card"><div class="donut-head"><b>Divisão da renda · ${MONTHS[m - 1]} ${y}</b><button class="icon-btn sm" data-a="bcfg" aria-label="Configurar a divisão da renda">${C.icon('gear')}</button></div>
           <p class="hint dist-model">${C.esc(B.activeModelOf(cfg).name)}</p>${rendaBolacha(cfg, d, sel, only, 'd')}</div>
         ${exp ? `<div class="section-label"><span>METAS DE GASTOS</span></div>${exp}` : ''}
         ${inc ? `<div class="section-label"><span>METAS DE RECEITAS</span></div>${inc}` : ''}
-        ${exp || inc ? '' : '<div class="empty">Nenhuma meta. Toque em + para criar.</div>'}`;
+        ${sav ? `<div class="section-label"><span>METAS DE ACUMULAÇÃO</span></div>${sav}` : ''}
+        ${exp || inc || sav ? '' : '<div class="empty">Nenhuma meta. Toque em + para criar.</div>'}`;
     },
     actions: {
       open: id => push(metaDetail(id)),
@@ -1010,6 +1011,20 @@ function rendaBolacha(cfg, d, sel, only, act = 'd') {
       <div class="kv"><span>${save ? 'Falta guardar' : 'Disponível no limite'}</span><span>${money(c.left)}</span></div>
       ${c.over ? `<div class="kv"><span>${save ? 'Guardou além do plano' : 'Excedeu o limite'}</span><span class="${save ? 'pos' : 'neg'}">${money(c.over)}</span></div>` : ''}
       ${!save && c.plannedOver && !c.over ? `<div class="kv"><span>O previsto passa do limite em</span><span class="warn">${money(c.plannedOver)}</span></div>` : ''}
+      ${(() => {
+        // as metas são o agrupamento principal dentro da categoria; as tags detalham cada meta
+        const by = new Map();
+        for (const x of c.items) {
+          const it = x.it, mt = it.metaId ? S().metas.get(it.metaId) : [...S().metas.values()].find(m => (m.tagIds || []).includes(it.tagId));
+          const key = it.piggyId ? 'pig:' + it.piggyId : it.kind === 'transfer' ? 'tr' : mt ? mt.id : '';
+          const g = by.get(key) || { name: it.piggyId ? `Cofrinho ${(S().piggies.get(it.piggyId) || {}).name || ''}` : it.kind === 'transfer' ? treasuryName() : mt ? mt.name : 'Sem meta', planned: 0, real: 0, tags: new Map() };
+          g.planned += x.planned; g.real += x.real;
+          const tn = it.tagId ? (C.tag(it.tagId) || {}).name : '';
+          if (tn) g.tags.set(tn, (g.tags.get(tn) || 0) + (x.real || x.planned));
+          by.set(key, g);
+        }
+        return by.size ? `<div class="dist-by">${[...by.values()].sort((a, b) => b.planned - a.planned).map(g => `<div class="kv"><span><b>${esc(g.name)}</b>${g.tags.size ? `<small> · ${esc([...g.tags.keys()].join(', '))}</small>` : ''}</span><span>${money(g.real)} de ${money(g.planned)}</span></div>`).join('')}</div>` : '';
+      })()}
       ${items.length ? items.map(x => `<button class="card-row" data-a="goDay" data-id="${x.it.date}"><span class="grow"><div class="t">${esc(C.itemTitle(x.it))}</div><div class="s">${C.dm(x.it.date)} · ${x.real ? (save ? 'feito' : 'pago') : 'previsto'}</div></span><span class="v">${money(x.real || x.planned)}</span></button>`).join('') : `<p class="hint">${(c.metaIds || []).length + (c.tagIds || []).length + (c.piggyIds || []).length ? 'Nada lançado nesta categoria no período.' : 'Ligue metas, tags, cofrinhos ou o Tesouro a esta categoria na engrenagem.'}</p>`}
     </div>`;
   } else if (o) {
@@ -1141,7 +1156,19 @@ function budgetCatForm(catId) {
   return view;
 }
 
+function savingCard(m) {
+  const { money, esc, dmy } = C;
+  const pig = S().piggies.get(m.piggyId);
+  const plan = C.F.savingPlan(m, { piggy: pig, data: S().data, today: C.today() });
+  const u = C.F.freqUnit(m);
+  return `<button class="card-row col" data-a="open" data-id="${m.id}">
+    <span class="line"><span class="dot" style="background:${m.color}"></span><span class="grow t">${esc(m.name)}${m.completedAt ? ' <span class="muted small">concluída</span>' : ''}</span><span class="v">${Math.round(plan.pct * 100)}%</span></span>
+    ${progress(plan.pct, m.color)}
+    <span class="s">${money(plan.saved)} de ${money(plan.goal)} · ${plan.done ? 'valor atingido' : `guardar ${money(plan.perPeriod)} por ${u}`} · até ${m.deadline ? dmy(m.deadline) : '—'}${pig ? ` · cofrinho ${esc(pig.name)}` : ''}</span>
+  </button>`;
+}
 function metaCard(m, p) {
+  if (m.kind === 'saving') return savingCard(m);
   const { money, esc } = C;
   const inc = m.kind === 'income';
   if (!p.limit) {
@@ -1165,7 +1192,34 @@ function metaTags(m) {
   return names.length ? `<span class="s meta-tags">Tags: ${names.join(' · ')}</span>` : '';
 }
 
+function savingDetail(id) {
+  return {
+    get title() { return (S().metas.get(id) || {}).name || 'Meta'; },
+    right: { label: 'Editar', fn: () => push(metaForm(S().metas.get(id))) },
+    body: () => {
+      const m = S().metas.get(id); if (!m) return '';
+      const { money, dmy, esc } = C;
+      const pig = S().piggies.get(m.piggyId);
+      const plan = C.F.savingPlan(m, { piggy: pig, data: S().data, today: C.today() });
+      const u = C.F.freqUnit(m);
+      return `<div class="stats">
+          ${stat('Guardado', money(plan.saved), '', true)}
+          ${stat('Objetivo', money(plan.goal))}${stat('Falta', money(plan.left))}
+          ${stat('Prazo', m.deadline ? dmy(m.deadline) : '—')}
+          ${stat(`Guardar por ${u}`, plan.done ? '—' : money(plan.perPeriod))}
+          ${stat('Períodos restantes', String(plan.periods))}
+        </div>
+        ${progress(plan.pct, m.color)}
+        ${m.completedAt ? '<p class="hint">Meta concluída. O dinheiro continua no cofrinho até você decidir usar.</p>' : plan.done ? '<p class="hint">Valor atingido! Você pode marcar a meta como concluída em Editar.</p>' : `<p class="hint">${C.F.SAVING_FREQ[m.freq] || ''}: o valor por ${u} é recalculado a partir de hoje com o que falta; o que já foi guardado continua valendo. Sem rendimento.</p>`}
+        ${pig ? `<div class="btn-row"><button class="primary-btn" data-a="pig">Abrir o cofrinho ${esc(pig.name)}</button></div>` : '<p class="hint">Nenhum cofrinho ligado. Escolha um em Editar.</p>'}
+        <div class="section-label"><span>DEPÓSITOS NO COFRINHO</span></div>
+        ${plan.moves.slice().reverse().map(x => row({ a: 'goDay', id: x.date, t: esc(C.itemTitle(x.it)), s: C.dm(x.date), v: (x.amount < 0 ? '−' : '+') + money(Math.abs(x.amount)), cls: x.amount < 0 ? 'neg' : 'pos' })).join('') || '<p class="hint">Nada guardado ainda.</p>'}`;
+    },
+    actions: { pig: () => push(piggyDetail(S().metas.get(id).piggyId)), goDay },
+  };
+}
 function metaDetail(id) {
+  if ((S().metas.get(id) || {}).kind === 'saving') return savingDetail(id);
   let ref = C.today();
   const view = {
     get title() { return (S().metas.get(id) || {}).name || 'Meta'; },
@@ -1232,48 +1286,77 @@ function newMetaAccounts() {
   const shown = C.accountsList().filter(x => S().set && S().set.has(x.id)).map(x => x.id);
   return C.filtering() && shown.length ? shown : [S().settings.defaultAccount];
 }
+/** Quanto guardar por período, calculado na hora a partir do valor, do prazo e da frequência. */
+function savingHint(v) {
+  if (!v.amount || !v.deadline) return 'Informe o valor e o prazo: o app calcula quanto guardar em cada período.';
+  const pig = v.piggyId ? S().piggies.get(v.piggyId) : null;
+  const plan = C.F.savingPlan({ ...v, kind: 'saving', freq: v.freq || 'month' }, { piggy: pig, data: S().data, today: C.today() });
+  const u = C.F.freqUnit({ ...v, freq: v.freq || 'month' });
+  return `<b>Guardar ${C.money(plan.perPeriod)} por ${u}</b> · ${plan.periods} ${u === 'mês' ? (plan.periods === 1 ? 'mês' : 'meses') : u === 'dia' ? 'dias' : u + (plan.periods === 1 ? '' : 's')} até ${C.dmy(v.deadline)}${plan.saved ? ` · já guardado ${C.money(plan.saved)}` : ''} (sem rendimento).`;
+}
 function metaForm(m = null) {
-  const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', ') }
-    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80 };
+  const value = m ? { ...m, tagIds: [...(m.tagIds || [])], accountIds: [...(m.accountIds || [])], originsTxt: (m.origins || []).join(', '), completed: !!m.completedAt }
+    : { name: '', kind: 'expense', period: 'month', amount: 0, tagIds: [], onlyAssigned: true, accountIds: newMetaAccounts(), originsTxt: '', rollover: 'none', carryExcess: false, showOnCalendar: false, color: C.PALETTE[(S().metas.size * 5 + 8) % C.PALETTE.length], colorGood: '#45cf7f', colorBad: '#ff5f57', tintTags: true, alertPct: 80, freq: 'month', deadline: '', piggyId: '' };
   const daily = v => C.F.DAY_PERIODS.has(v.period);
   return formView({
     title: m ? 'Editar meta' : 'Nova meta', value,
     fields: [
       { k: 'name', label: 'Nome', required: true, placeholder: 'Ex.: Alimentação' },
-      { k: 'kind', label: 'Tipo', type: 'select', options: [['expense', 'Limite de gastos'], ['income', 'Meta de receita']] },
-      { k: 'period', label: 'Período', type: 'select', options: Object.entries(C.F.PERIODS) },
-      { k: 'from', label: 'De', type: 'date', show: v => v.period === 'custom' },
-      { k: 'to', label: 'Até', type: 'date', show: v => v.period === 'custom' },
-      { k: 'amount', label: 'Limite / valor', type: 'money' },
-      { hint: 'Pode deixar em branco e definir depois: a meta já acompanha o que foi gasto.', show: v => !v.amount },
+      { k: 'kind', label: 'Tipo', type: 'select', options: [['expense', 'Limite de gastos'], ['income', 'Meta de receita'], ['saving', 'Acumulação (juntar até uma data)']] },
+      // ---- acumulação: quanto juntar, até quando e com que frequência; o app calcula quanto guardar por período
+      { k: 'amount', label: 'Quanto quer juntar', type: 'money', show: v => v.kind === 'saving' },
+      { k: 'deadline', label: 'Até quando', type: 'date', show: v => v.kind === 'saving' },
+      { k: 'freq', label: 'Como vai guardar', type: 'select', options: Object.entries(C.F.SAVING_FREQ), show: v => v.kind === 'saving' },
+      { k: 'freqDays', label: 'A cada quantos dias', type: 'number', min: 1, show: v => v.kind === 'saving' && v.freq === 'days' },
+      { hint: v => savingHint(v), show: v => v.kind === 'saving' },
+      { k: 'piggyId', label: 'Cofrinho onde o dinheiro fica', type: 'select', options: () => [['', 'Criar um cofrinho com o mesmo nome'], ...[...S().piggies.values()].filter(p => !p.archived).map(p => [p.id, p.name])], show: v => v.kind === 'saving' },
+      { hint: 'Os depósitos reais nesse cofrinho atualizam a meta. Nada é guardado sozinho.', show: v => v.kind === 'saving' },
+      { k: 'period', label: 'Período', type: 'select', options: Object.entries(C.F.PERIODS), show: v => v.kind !== 'saving' },
+      { k: 'from', label: 'De', type: 'date', show: v => v.period === 'custom' && v.kind !== 'saving' },
+      { k: 'to', label: 'Até', type: 'date', show: v => v.period === 'custom' && v.kind !== 'saving' },
+      { k: 'amount', label: 'Limite / valor', type: 'money', show: v => v.kind !== 'saving' },
+      { hint: 'Pode deixar em branco e definir depois: a meta já acompanha o que foi gasto.', show: v => !v.amount && v.kind !== 'saving' },
       { k: 'color', label: 'Cor', type: 'color' },
-      { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch' },
-      { section: 'O que entra na meta' },
-      { k: 'tagIds', label: 'Tags desta meta (cada tag fica em uma meta só)', type: 'multi', options: () => tagOptions(null)() },
-      { hint: 'Os lançamentos entram na meta pela tag ou quando são lançados direto na meta, sem tag.' },
-      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: uma meta só para a conta de trabalho', type: 'multi', options: accOptions, show: () => C.accountsList().length > 1 },
+      { k: 'tintTags', label: 'Tags usam tons da cor da meta', type: 'switch', show: v => v.kind !== 'saving' },
+      { section: 'O que entra na meta', show: v => v.kind !== 'saving' },
+      { k: 'tagIds', label: 'Tags desta meta (cada tag fica em uma meta só)', type: 'multi', options: () => tagOptions(null)(), show: v => v.kind !== 'saving' },
+      { hint: 'Os lançamentos entram na meta pela tag ou quando são lançados direto na meta, sem tag.', show: v => v.kind !== 'saving' },
+      { k: 'accountIds', label: 'Conta desta meta (nenhuma = todas). Ex.: uma meta só para a conta de trabalho', type: 'multi', options: accOptions, show: v => C.accountsList().length > 1 && v.kind !== 'saving' },
       { k: 'originsTxt', label: 'Origens', placeholder: 'Ex.: iFood, Salário CLT', show: v => v.kind === 'income' },
-      { section: 'Sobras e excedentes', show: v => daily(v) && v.kind !== 'income' },
-      { k: 'rollover', label: 'Valor não usado', type: 'select', options: Object.entries(ROLLOVER), show: v => daily(v) && v.kind !== 'income' },
-      { k: 'carryExcess', label: 'Excedente desconta dos próximos dias', type: 'switch', show: v => daily(v) && v.kind !== 'income' && (v.rollover === 'week' || v.rollover === 'month') },
-      { k: 'showOnCalendar', label: 'Colorir os dias no calendário', type: 'switch', show: v => daily(v) && v.kind !== 'income' },
+      { section: 'Sobras e excedentes', show: v => daily(v) && v.kind === 'expense' },
+      { k: 'rollover', label: 'Valor não usado', type: 'select', options: Object.entries(ROLLOVER), show: v => daily(v) && v.kind === 'expense' },
+      { k: 'carryExcess', label: 'Excedente desconta dos próximos dias', type: 'switch', show: v => daily(v) && v.kind === 'expense' && (v.rollover === 'week' || v.rollover === 'month') },
+      { k: 'showOnCalendar', label: 'Colorir os dias no calendário', type: 'switch', show: v => daily(v) && v.kind === 'expense' },
       { k: 'colorGood', label: 'Cor do dia dentro do orçamento', type: 'color', show: v => daily(v) && v.showOnCalendar },
       { k: 'colorBad', label: 'Cor do dia acima do orçamento', type: 'color', show: v => daily(v) && v.showOnCalendar },
       { hint: 'A cor do orçamento aparece como uma pequena barra sob o número do dia, separada do saldo.', show: v => daily(v) && v.showOnCalendar },
-      { section: 'Alerta', show: v => v.kind !== 'income' },
-      { k: 'alertPct', label: 'Avisar ao atingir (%)', type: 'number', min: 1, show: v => v.kind !== 'income' },
+      { section: 'Alerta', show: v => v.kind === 'expense' },
+      { k: 'alertPct', label: 'Avisar ao atingir (%)', type: 'number', min: 1, show: v => v.kind === 'expense' },
+      { k: 'completed', label: 'Meta concluída (o dinheiro continua no cofrinho)', type: 'switch', show: v => !!m && v.kind === 'saving' },
+      { k: 'hideInPanel', label: 'Esconder da área de Metas abaixo do calendário', type: 'switch' },
       { section: '' },
       { k: 'archived', label: 'Arquivar', type: 'switch', show: () => !!m },
     ],
     onSave: async v => {
       const { originsTxt, ...rest } = v;
       const obj = { ...(m || { id: C.uid(), createdAt: C.nowISO() }), ...rest, onlyAssigned: true, origins: originsTxt.split(',').map(s => s.trim()).filter(Boolean) };
+      if (obj.kind === 'saving') {
+        if (!obj.amount || !obj.deadline) { C.toast('Informe quanto quer juntar e até quando'); return false; }
+        obj.freq = obj.freq || 'month'; obj.start = obj.start || C.today(); obj.tagIds = []; obj.period = 'custom';
+        obj.completedAt = obj.completed ? (m && m.completedAt) || C.nowISO() : null; delete obj.completed;
+        if (!obj.piggyId || !S().piggies.get(obj.piggyId)) {
+          // cofrinho com o mesmo nome da meta (virtual, na conta principal)
+          const pig = { id: C.uid(), name: obj.name, type: 'virtual', accountId: S().settings.defaultAccount, goal: obj.amount, deadline: obj.deadline, color: obj.color, createdAt: C.nowISO() };
+          await saveStore('piggies', 'piggies', pig, `Cofrinho criado para a meta ${obj.name}`);
+          obj.piggyId = pig.id;
+        }
+      }
       // cada tag pertence a uma meta só: as tags marcadas aqui saem das outras metas
       for (const o of S().metas.values()) {
         if (o.id === obj.id || !(o.tagIds || []).some(id => obj.tagIds.includes(id))) continue;
         await saveStore('metas', 'metas', { ...o, tagIds: o.tagIds.filter(id => !obj.tagIds.includes(id)) });
       }
-      if (!daily(obj) || obj.kind === 'income' || !obj.amount) obj.showOnCalendar = false;
+      if (!daily(obj) || obj.kind !== 'expense' || !obj.amount) obj.showOnCalendar = false;
       if (obj.showOnCalendar) for (const o of S().metas.values()) if (o.id !== obj.id && o.showOnCalendar) await saveStore('metas', 'metas', { ...o, showOnCalendar: false });
       await saveStore('metas', 'metas', obj);
       C.toast(m ? 'Meta atualizada' : 'Meta criada');
@@ -1324,11 +1407,25 @@ function reportsView() {
         <div class="section-label"><span>DESPESAS: PREVISTO X REALIZADO</span></div>
         <div class="bars">${cols.map(c => `<div class="col${c.cur ? ' cur' : ''}"><div class="pair"><i style="height:${c.exp / max * 100}%;background:var(--s3)"></i><i style="height:${c.expReal / max * 100}%;background:var(--accent)"></i></div><span>${c.label}</span></div>`).join('')}</div>
         <div class="legend-mini"><span><i style="background:var(--s3)"></i>Previsto</span><span><i style="background:var(--accent)"></i>Realizado</span></div>
-        <div class="section-label"><span>GASTOS REALIZADOS POR TAG</span></div>
-        ${byTag.map(([tid, v]) => {
-          const mt = tid.startsWith('meta:') ? S().metas.get(tid.slice(5)) : null, t = mt ? null : C.tag(tid);
-          const name = mt ? `${mt.name} · geral` : t ? t.name : 'Sem tag', col = mt ? mt.color : t ? C.tagColor(t) : 'var(--text-3)';
-          return `<div class="tagbar"><span class="grow">${esc(name)}</span><span>${money(v)}</span>${progress(v / tagMax, col)}</div>`; }).join('') || '<p class="hint">Nenhum gasto pago neste período.</p>'}`;
+        <div class="section-label"><span>GASTOS REALIZADOS POR META</span><span>com as tags de cada uma</span></div>
+        ${(() => {
+          // a meta é o agrupamento principal; as tags detalham o que compõe cada meta
+          const groups = new Map();
+          for (const [tid, v] of byTag) {
+            const metaId = tid.startsWith('meta:') ? tid.slice(5) : ([...S().metas.values()].find(m => (m.tagIds || []).includes(tid)) || {}).id || '';
+            const g = groups.get(metaId) || { total: 0, tags: [] };
+            g.total += v; if (!tid.startsWith('meta:')) g.tags.push([tid, v]); else g.direct = (g.direct || 0) + v;
+            groups.set(metaId, g);
+          }
+          const list = [...groups].sort((a, b) => b[1].total - a[1].total);
+          const max = Math.max(1, ...list.map(x => x[1].total));
+          return list.map(([mid, g]) => {
+            const mt = S().metas.get(mid), col = mt ? mt.color : 'var(--text-3)';
+            const tags = [...g.tags].sort((a, b) => b[1] - a[1]).map(([tid, v]) => { const t = C.tag(tid); return `<div class="rep-tag"><span>${esc(t ? t.name : 'Sem tag')}</span><span>${money(v)}</span></div>`; }).join('')
+              + (g.direct ? `<div class="rep-tag"><span>${esc(mt ? mt.name : '')} · geral</span><span>${money(g.direct)}</span></div>` : '');
+            return `<div class="tagbar rep-meta"><span class="grow"><b>${esc(mt ? mt.name : 'Sem meta')}</b></span><span>${money(g.total)}</span>${progress(g.total / max, col)}</div>${tags}`;
+          }).join('') || '<p class="hint">Nenhum gasto pago neste período.</p>';
+        })()}`;
     },
     actions: {
       mode: id => { mode = id; render(); },
@@ -1415,11 +1512,23 @@ export function renderPanels(box) {
       const sel = S().selected || t, sv = S().view || parse(t);
       const inView = (sv.y === parse(t).y && sv.m === parse(t).m) ? t : iso(sv.y, sv.m, 1);
       const date = v === 'day' || v === 'week' ? sel : v === 'year' ? (sv.y === parse(t).y ? t : iso(sv.y, 1, 1)) : inView;
-      const ms = [...S().metas.values()].filter(C.metaVisible).map(C.scopedMeta);
-      const P = C.F.metaPanel({ metas: ms, view: v, date, data: S().data, isHoliday: S().isHoliday, mondayFirst: S().settings.mondayFirst });
+      const ms = [...S().metas.values()].filter(C.metaVisible).filter(m => !m.hideInPanel).map(C.scopedMeta);
+      const P = C.F.metaPanel({ metas: ms, view: v, date, data: S().data, isHoliday: S().isHoliday, mondayFirst: S().settings.mondayFirst, piggies: [...S().piggies.values()], today: t });
       const rows = P.groups.flatMap(g => g.rows);
       const over = rows.filter(r => r.status === 'over').length;
+      const fmtSaving = r => {
+        const tgt = r.target, done = r.done$ || 0, pctP = tgt ? Math.min(1, done / tgt) : r.pct;
+        const head = tgt == null ? `<b>${money(r.saved)} de ${money(r.goal)}</b>` : done >= tgt ? '<b class="pos">contribuição feita</b>' : `<b>faltam ${money(tgt - done)}</b>`;
+        const sub = tgt == null ? `${Math.round(r.pct * 100)}% do objetivo · guardar ${money(r.perPeriod)} por ${r.unit} · ${done ? `guardado no período ${money(done)}` : 'nada guardado no período'}`
+          : `Guardado ${money(done)} de ${money(tgt)} planejados · total ${money(r.saved)} de ${money(r.goal)} (${Math.round(r.pct * 100)}%)`;
+        const parts = r.parts ? `<div class="mp-parts">${r.parts.map(x => `<span class="mp-part ${x.target != null && x.done$ >= x.target ? 'met' : x.target == null ? 'none' : 'ok'}" title="${esc(`${x.label}: ${money(x.done$)}${x.target != null ? ` de ${money(x.target)}` : ''}`)}"><small>${esc(x.label)}</small><i style="--p:${x.target ? Math.min(100, Math.round(x.done$ / x.target * 100)) : x.done$ > 0 ? 100 : 0}%"></i></span>`).join('')}</div>` : '';
+        return `<button class="mp-row" data-a="meta" data-id="${r.meta.id}">
+          <span class="line"><span class="dot" style="background:${r.meta.color || 'var(--accent)'}"></span><span class="grow t">${esc(r.meta.name)} <small>${esc(r.label)}</small></span>${head}</span>
+          <span class="mp-bar"><i style="width:${(pctP * 100).toFixed(1)}%;background:${r.meta.color || 'var(--accent)'}"></i></span>
+          <span class="s">${sub}</span>${parts}</button>`;
+      };
       const fmtRow = r => {
+        if (r.kind === 'saving') return fmtSaving(r);
         const inc = (r.meta.kind || 'expense') === 'income';
         const pct = r.limit ? Math.min(1, r.real / r.limit) : 0, pctP = r.limit ? Math.min(1, r.planned / r.limit) : 0;
         const head = inc ? (r.status === 'met' ? `<b class="pos">${r.over ? `+${money(r.over)} além` : 'meta atingida'}</b>` : `<b>faltam ${money(r.remaining)}</b>`)

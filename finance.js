@@ -319,3 +319,195 @@ export function undoReceiptCheck(itemKey, { data, accounts, piggies = [], today 
   for (const [id, a] of after.accounts) { const b = before.accounts.get(id); const free = a.real - a.reserved, freeB = b ? b.real - b.reserved : 0; if (free < 0 && freeB >= 0) problems.push({ kind: 'account', id, missing: -free }); }
   return { ok: !problems.length, problems };
 }
+
+// ---------------------------------------------------------------- metas abaixo do calendário (acompanha a visualização)
+const DAY_MS = 864e5;
+const nDays = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / DAY_MS) + 1;
+const shortDM = d => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+const MONTH_ABBR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+/** Limite (ou valor esperado) de uma meta dentro de [from, to]. */
+export function rangeLimit(meta, from, to, isHoliday = () => false) {
+  const a = meta.amount || 0;
+  if (!a) return 0;
+  if (DAY_PERIODS.has(meta.period)) { let c = 0; for (const d of range(from, to)) if (appliesOn(meta, d, isHoliday)) c++; return a * c; }
+  const days = nDays(from, to);
+  switch (meta.period) {
+    case 'week': return Math.round(a * days / 7);
+    case 'month': {
+      // soma, mês a mês, a fração de cada mês dentro do intervalo
+      let v = 0, { y, m } = parse(from);
+      for (;;) {
+        const f = iso(y, m, 1), l = iso(y, m, daysInMonth(y, m));
+        if (f > to) break;
+        const lo = f > from ? f : from, hi = l < to ? l : to;
+        if (lo <= hi) v += a * nDays(lo, hi) / daysInMonth(y, m);
+        m++; if (m > 12) { m = 1; y++; }
+      }
+      return Math.round(v);
+    }
+    case 'year': return Math.round(a * days / (parse(from).y % 4 === 0 ? 366 : 365));
+    case 'custom': {
+      if (!meta.from || !meta.to || meta.to < from || meta.from > to) return 0;
+      const lo = meta.from > from ? meta.from : from, hi = meta.to < to ? meta.to : to;
+      return Math.round(a * nDays(lo, hi) / nDays(meta.from, meta.to));
+    }
+    default: return a;
+  }
+}
+
+/** Previsto e realizado de uma meta em [from, to] (cada lançamento conta uma vez). */
+export function rangeStats(meta, from, to, data, isHoliday) {
+  let real = 0, planned = 0;
+  for (const list of itemsInRange(from, to, data).values()) for (const it of list) { if (it.status === 'moved') continue; const s = metaShare(it, meta); if (s) { real += s.real; planned += s.planned; } }
+  const limit = rangeLimit(meta, from, to, isHoliday);
+  const inc = (meta.kind || 'expense') === 'income';
+  return {
+    from, to, limit, real, planned,
+    // despesa: restante e excedente do limite; receita: quanto falta receber e o que passou da meta
+    remaining: limit ? Math.max(0, limit - real) : 0,
+    over: limit ? Math.max(0, real - limit) : 0,
+    status: !limit ? 'none' : inc ? (real >= limit ? 'met' : 'open') : real > limit ? 'over' : planned > limit ? 'risk' : 'ok',
+  };
+}
+
+/**
+ * Metas que aparecem abaixo do calendário, conforme a visualização:
+ * dia → diárias do dia · semana → diárias (dia a dia) e semanais · mês → diárias, semanais (semana a semana) e mensais ·
+ * ano → anuais e mensais (mês a mês) · personalizadas → quando o período cruza o intervalo exibido.
+ * Retorna { from, to, title, groups: [{ title, rows: [{ meta, label, ...stats, parts? }] }] }.
+ */
+export function metaPanel({ metas, view, date, data, isHoliday, mondayFirst = false, piggies = [], today = date }) {
+  const { y, m } = parse(date);
+  const wk = periodRange({ period: 'week' }, date, mondayFirst);
+  const R = view === 'day' ? { from: date, to: date, title: `dia ${shortDM(date)}` }
+    : view === 'week' ? { from: wk.from, to: wk.to, title: `semana ${shortDM(wk.from)} a ${shortDM(wk.to)}` }
+    : view === 'year' ? { from: iso(y, 1, 1), to: iso(y, 12, 31), title: String(y) }
+    : { from: iso(y, m, 1), to: iso(y, m, daysInMonth(y, m)), title: `${MONTH_ABBR[m - 1]}/${y}` };
+  const live = metas.filter(x => !x.archived && x.amount && x.kind !== 'saving');
+  const by = p => live.filter(x => (p === 'daily' ? DAY_PERIODS.has(x.period) : x.period === p));
+  const row = (meta, from, to, label, parts) => ({ meta, label, ...rangeStats(meta, from, to, data, isHoliday), ...(parts ? { parts } : {}) });
+  const days = (from, to) => [...range(from, to)];
+  const weeksOfMonth = () => {
+    const out = []; let s = periodRange({ period: 'week' }, R.from, mondayFirst).from;
+    while (s <= R.to) { out.push({ from: s, to: addDays(s, 6) }); s = addDays(s, 7); }
+    return out;
+  };
+  const groups = [];
+  const push = (title, rows) => { if (rows.length) groups.push({ title, rows }); };
+  if (view === 'day') {
+    push('Metas do dia', by('daily').filter(x => appliesOn(x, date, isHoliday)).map(x => row(x, date, date, shortDM(date))));
+  } else if (view === 'week') {
+    push('Metas diárias', by('daily').map(x => row(x, R.from, R.to, 'na semana',
+      days(R.from, R.to).filter(d => appliesOn(x, d, isHoliday)).map(d => ({ label: d.slice(8, 10), ...rangeStats(x, d, d, data, isHoliday) })))));
+    push('Metas semanais', by('week').map(x => row(x, R.from, R.to, R.title)));
+  } else if (view === 'year') {
+    push('Metas anuais', by('year').map(x => row(x, R.from, R.to, R.title)));
+    push('Metas mensais', by('month').map(x => row(x, R.from, R.to, 'no ano',
+      Array.from({ length: 12 }, (_, i) => ({ label: MONTH_ABBR[i], ...rangeStats(x, iso(y, i + 1, 1), iso(y, i + 1, daysInMonth(y, i + 1)), data, isHoliday) })))));
+    push('Metas semanais e diárias', [...by('week'), ...by('daily')].map(x => row(x, R.from, R.to, 'no ano')));
+  } else {
+    push('Metas mensais', by('month').map(x => row(x, R.from, R.to, R.title)));
+    push('Metas semanais', by('week').map(x => row(x, R.from, R.to, 'no mês',
+      weeksOfMonth().map(w => ({ label: `${w.from.slice(8, 10)}–${w.to.slice(8, 10)}`, ...rangeStats(x, w.from, w.to, data, isHoliday) })))));
+    push('Metas diárias', by('daily').map(x => {
+      const r = row(x, R.from, R.to, 'no mês');
+      r.overDays = days(R.from, R.to).filter(d => appliesOn(x, d, isHoliday) && rangeStats(x, d, d, data, isHoliday).status === 'over').length;
+      return r;
+    }));
+  }
+  const pigs = new Map(piggies.map(p => [p.id, p]));
+  push('Metas de acumulação', metas.filter(x => !x.archived && x.kind === 'saving' && x.amount && !x.completedAt).map(x => savingRow(x, { piggy: pigs.get(x.piggyId), data, today, view, date, from: R.from, to: R.to, mondayFirst })));
+  push('Períodos personalizados', by('custom').filter(x => x.from && x.to && x.to >= R.from && x.from <= R.to).map(x => row(x, x.from, x.to, `${shortDM(x.from)} a ${shortDM(x.to)}`)));
+  return { ...R, groups };
+}
+
+// ---------------------------------------------------------------- metas de acumulação (juntar um valor até uma data)
+// A meta define quanto juntar e até quando; o app calcula quanto guardar por período; o cofrinho ligado
+// registra quanto foi guardado de verdade (só depósitos reais, cada um contado uma vez).
+export const SAVING_FREQ = { week: 'Toda semana', biweek: 'A cada 15 dias', month: 'Todo mês', days: 'A cada N dias' };
+const freqDays = meta => (meta.freq === 'biweek' ? 14 : meta.freq === 'days' ? Math.max(1, +meta.freqDays || 1) : 7);
+
+/** Depósitos e retiradas reais de um cofrinho em [from, to] (virtual: reservas; real: transferências na conta dele). */
+export function piggyMoves(piggy, data, from, to) {
+  const out = [];
+  if (!piggy) return out;
+  for (const [d, list] of itemsInRange(from, to, data)) {
+    for (const it of list) {
+      if (it.status === 'moved' || !counts(it)) continue;
+      const r = realizedOf(it); if (!r) continue;
+      if (piggy.type === 'real') {
+        if (it.kind === 'transfer' && it.toAccountId === piggy.accountId && it.accountId !== piggy.accountId) out.push({ date: d, amount: r, it });
+        else if (it.kind === 'transfer' && it.accountId === piggy.accountId && it.toAccountId !== piggy.accountId) out.push({ date: d, amount: -r, it });
+      } else if (it.piggyId === piggy.id && (it.kind === 'reserve' || it.kind === 'release')) out.push({ date: d, amount: it.kind === 'reserve' ? r : -r, it });
+    }
+  }
+  return out;
+}
+
+/** Janela do período de contribuição que contém `date` (semana, quinzena, mês ou a cada N dias). */
+export function savingWindow(meta, date, mondayFirst = false) {
+  if (meta.freq === 'month') { const { y, m } = parse(date); return { from: iso(y, m, 1), to: iso(y, m, daysInMonth(y, m)) }; }
+  if (meta.freq === 'week' || !meta.freq) return periodRange({ period: 'week' }, date, mondayFirst);
+  const start = String(meta.start || meta.createdAt || date).slice(0, 10), n = freqDays(meta);
+  const k = Math.floor((Date.parse(date) - Date.parse(start)) / DAY_MS / n);
+  const from = addDays(start, k * n);
+  return { from, to: addDays(from, n - 1) };
+}
+
+/** Quantos períodos de contribuição faltam de `today` até o prazo (sempre pelo menos 1). */
+export function periodsLeft(meta, today) {
+  const deadline = meta.deadline;
+  if (!deadline || deadline < today) return 1;
+  if (meta.freq === 'month') {
+    const a = parse(today), b = parse(deadline);
+    return Math.max(1, (b.y - a.y) * 12 + (b.m - a.m) - (b.d < a.d ? 1 : 0));
+  }
+  return Math.max(1, Math.floor((Date.parse(deadline) - Date.parse(today)) / DAY_MS / freqDays(meta)));
+}
+
+/**
+ * Plano de uma meta de acumulação: quanto falta e quanto guardar por período a partir de hoje.
+ * Mudar prazo, valor ou frequência recalcula daqui pra frente; o que já foi guardado continua valendo.
+ */
+export function savingPlan(meta, { piggy, data, today }) {
+  const goal = meta.amount || 0;
+  const all = piggyMoves(piggy, data, '1900-01-01', today);
+  const saved = Math.max(0, all.reduce((s, x) => s + x.amount, 0));
+  const left = Math.max(0, goal - saved);
+  const periods = periodsLeft(meta, today);
+  // o que foi guardado no período atual conta para a contribuição deste período (não reduz a parcela duas vezes)
+  const w = savingWindow(meta, today);
+  const before = Math.max(0, all.filter(x => x.date < w.from).reduce((s, x) => s + x.amount, 0));
+  const perPeriod = left ? Math.ceil(Math.max(0, goal - before) / periods) : 0;
+  return { goal, saved, left, periods, perPeriod, done: goal > 0 && saved >= goal, pct: goal ? Math.min(1, saved / goal) : 0, moves: all };
+}
+const FREQ_UNIT = { week: 'semana', biweek: 'quinzena', month: 'mês', days: 'período' };
+export const freqUnit = meta => (meta.freq === 'days' && +meta.freqDays === 1 ? 'dia' : FREQ_UNIT[meta.freq || 'week']);
+
+/**
+ * Acompanhamento de uma meta de acumulação no intervalo exibido.
+ * Período da meta maior que o intervalo (ex.: mensal na semana) → mostra o período da meta que contém a data;
+ * menor ou igual (ex.: semanal no mês) → soma os períodos que terminam no intervalo, com as partes.
+ * Dia: só mostra contribuição quando a frequência é diária; senão, só a evolução.
+ */
+export function savingRow(meta, { piggy, data, today, view, date, from, to, mondayFirst = false }) {
+  const plan = savingPlan(meta, { piggy, data, today });
+  const base = { meta, kind: 'saving', ...plan, unit: freqUnit(meta) };
+  const dep = (a, b) => piggyMoves(piggy, data, a, b).reduce((s, x) => s + x.amount, 0);
+  const daily = meta.freq === 'days' && +meta.freqDays === 1;
+  if (view === 'day' && !daily) return { ...base, label: 'evolução', target: null, done$: dep(from, to) };
+  const len = meta.freq === 'month' ? 30 : freqDays(meta), span = Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1;
+  if (len > span) {
+    const w = savingWindow(meta, date, mondayFirst);
+    return { ...base, label: meta.freq === 'month' ? 'neste mês' : `${w.from.slice(8, 10)}/${w.from.slice(5, 7)} a ${w.to.slice(8, 10)}/${w.to.slice(5, 7)}`, target: plan.perPeriod, done$: dep(w.from, w.to), from: w.from, to: w.to };
+  }
+  const parts = [];
+  let w = savingWindow(meta, from, mondayFirst);
+  while (w.from <= to) {
+    if (w.to >= from && w.to <= to && (!meta.deadline || w.from <= meta.deadline) && w.to >= String(meta.start || meta.createdAt || '').slice(0, 10)) parts.push({ label: meta.freq === 'month' ? MONTH_ABBR[parse(w.from).m - 1] : `${w.from.slice(8, 10)}–${w.to.slice(8, 10)}`, from: w.from, to: w.to, target: w.to < today ? null : plan.perPeriod, done$: dep(w.from, w.to) });
+    w = savingWindow(meta, addDays(w.to, 1), mondayFirst);
+  }
+  const target = parts.filter(x => x.target != null).reduce((s, x) => s + x.target, 0) + parts.filter(x => x.target == null).reduce((s, x) => s + Math.max(0, x.done$), 0);
+  return { ...base, label: view === 'year' ? 'no ano' : view === 'month' ? 'no mês' : 'na semana', target, done$: dep(from, to), parts };
+}
