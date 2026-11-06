@@ -1,0 +1,11 @@
+Correcoes locais da versao 3.1.20
+
+1. Saldo de hoje: lancamentos com data futura nao reduzem mais o saldo disponivel antes da data marcada.
+2. Projecao: lancamentos confirmados com data futura passam a entrar na previsao somente no dia agendado.
+3. Cores: removida a pintura automatica do fundo do dia em verde/vermelho por comparacao com o previsto. Cores de tags, entradas/saidas e avisos numericos permanecem.
+4. Historico: incluido botao para mostrar/ocultar os saldos reais de dias anteriores no calendario. Por padrao fica oculto. Ao ativar, cada dia mostra o saldo real ao fim daquele dia, calculado a partir do saldo inicial e das movimentacoes datadas ate aquele dia.
+5. Sincronizacao celular/PC: NAO implementada neste pacote. A versao atual usa localStorage, que e isolado em cada aparelho/navegador. Sincronizacao automatica exige backend/banco de dados na nuvem, identificacao/autenticacao do usuario e regras de acesso. Nao foi criado um falso sincronizador local.
+
+Arquivos alterados: index.html e sw.js.
+
+Importante: este pacote contem a aplicacao completa original mais as correcoes locais acima. A sincronizacao remota precisa ser implementada como uma etapa separada, com servico de nuvem e credenciais do projeto.
