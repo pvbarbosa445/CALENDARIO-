@@ -1,11 +1,10 @@
-Correcoes locais da versao 3.1.20
+Correções locais da versão 3.1.20
 
-1. Saldo de hoje: lancamentos com data futura nao reduzem mais o saldo disponivel antes da data marcada.
-2. Projecao: lancamentos confirmados com data futura passam a entrar na previsao somente no dia agendado.
-3. Cores: removida a pintura automatica do fundo do dia em verde/vermelho por comparacao com o previsto. Cores de tags, entradas/saidas e avisos numericos permanecem.
-4. Historico: incluido botao para mostrar/ocultar os saldos reais de dias anteriores no calendario. Por padrao fica oculto. Ao ativar, cada dia mostra o saldo real ao fim daquele dia, calculado a partir do saldo inicial e das movimentacoes datadas ate aquele dia.
-5. Sincronizacao celular/PC: NAO implementada neste pacote. A versao atual usa localStorage, que e isolado em cada aparelho/navegador. Sincronizacao automatica exige backend/banco de dados na nuvem, identificacao/autenticacao do usuario e regras de acesso. Nao foi criado um falso sincronizador local.
+1. Saldo de hoje: lançamentos futuros já confirmados não reduzem o saldo antes da data marcada.
+2. Projeção: lançamentos futuros confirmados entram somente na data marcada.
+3. Cores: removida a pintura automática do fundo dos dias em vermelho/verde por comparação com o previsto.
+4. Histórico: controle liga/desliga dos saldos reais dos dias anteriores na aba Planejamento > Exibição.
+5. Nova lógica de despesas: “Adicionar despesa” cria uma despesa prevista na data escolhida, sem reduzir o saldo real, sem aparecer como gasto realizado e sem entrar nas metas de gasto realizado. Ela aparece no calendário, na lista de eventos e nos filtros como prevista e reduz apenas o saldo projetado a partir da data marcada. Ao abrir a despesa e tocar em “Já gastei”, ela é removida das previstas e convertida em gasto realizado com data de hoje; então passa a descontar da conta e entrar nos totais/metas realizados. Despesas previstas podem ser editadas ou canceladas.
+6. Sincronização celular/PC: não implementada. A sincronização real requer banco de dados na nuvem, autenticação e regras de acesso.
 
 Arquivos alterados: index.html e sw.js.
-
-Importante: este pacote contem a aplicacao completa original mais as correcoes locais acima. A sincronizacao remota precisa ser implementada como uma etapa separada, com servico de nuvem e credenciais do projeto.

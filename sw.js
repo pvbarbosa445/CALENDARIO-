@@ -1,7 +1,7 @@
 // Meu Planejamento Financeiro — funciona offline.
 // Rede primeiro: quando há internet, abre sempre a versão mais nova do GitHub; sem internet, usa a última guardada.
 // Os dados ficam no navegador (localStorage) e nunca são apagados por este arquivo.
-const CACHE = 'mpf-2026-11-06-v3120-fix1';
+const CACHE = 'mpf-2026-11-06-expense-plan-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
 self.addEventListener('install', e => {
