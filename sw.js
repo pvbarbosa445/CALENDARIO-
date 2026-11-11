@@ -1,22 +1,36 @@
-// Meu Planejamento Financeiro — funciona offline.
-// Rede primeiro: quando há internet, abre sempre a versão mais nova do GitHub; sem internet, usa a última guardada.
-// Os dados ficam no navegador (localStorage) e nunca são apagados por este arquivo.
-const CACHE = 'mpf-2026-11-06-expense-plan-v2';
-const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
+// Meu Planejamento Financeiro — cache offline com atualização de versão.
+// Rede primeiro; se estiver offline, utiliza a última cópia local.
+const CACHE = 'mpf-2026-11-11-fix-v2';
+const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-maskable-512.png', './sync.js'];
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => Promise.all(ASSETS.map(a => c.add(a).catch(() => {})))).then(() => self.skipWaiting()));
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then(cache => Promise.all(ASSETS.map(asset => cache.add(asset).catch(() => {}))))
+      .then(() => self.skipWaiting())
+  );
 });
-self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
 });
-self.addEventListener('fetch', e => {
-  const req = e.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  e.respondWith(
-    fetch(req).then(res => {
-      if (res && res.ok) { const cp = res.clone(); caches.open(CACHE).then(c => c.put(req, cp)); }
-      return res;
-    }).catch(() => caches.match(req).then(r => r || caches.match('./index.html')))
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  event.respondWith(
+    fetch(request).then(response => {
+      if (response && response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE).then(cache => cache.put(request, copy));
+      }
+      return response;
+    }).catch(() => caches.match(request).then(cached => cached || caches.match('./index.html')))
   );
 });
