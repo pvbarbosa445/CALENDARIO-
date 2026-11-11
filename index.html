@@ -2445,4 +2445,58 @@ addEventListener('hashchange',()=>{pg=location.hash.slice(1)||'inicio';closeM();
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){setTimeout(run,400)});
   else setTimeout(run,400);
 })();
-</script><!-- [FIX-ANOTACOES-OK] --></body></html>
+</script><!-- [FIX-ANOTACOES-OK] --><style id="fix-css-2">
+/* Números do calendário no canto superior esquerdo */
+body.lean .cal2 .d2 .n,
+body.acc3 .agenda-cal .d2 .n {
+  align-self: flex-start !important;
+  justify-self: flex-start !important;
+  margin-left: 8px !important;
+  margin-right: auto !important;
+  text-align: left !important;
+}
+/* Agenda no celular: botões numa linha abaixo, sem quebrar o layout */
+@media(max-width:760px){
+  body.acc3 .agenda-item{
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 9px !important;
+  }
+  body.acc3 .agenda-tick { flex: none !important; }
+  body.acc3 .agenda-time { flex: none !important; }
+  body.acc3 .agenda-name { flex: 1 1 100px !important; min-width: 0 !important; }
+  body.acc3 .agenda-actions { 
+    flex: 1 1 100% !important; 
+    display: flex !important; 
+    gap: 6px !important; 
+    justify-content: flex-start !important; 
+    margin-top: 4px !important; 
+  }
+}
+/* Ajuste dos botões no rodapé do pop-up do dia */
+body.acc3 .mf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+body.acc3 .mf .btn {
+  flex: 1 1 auto;
+}
+</style>
+<script>
+(function(){
+  window.agendaItemHTML=function(x,ds){
+    var typ=x._type||x.type||'event',done=!!(S.memo.done[ds]&&S.memo.done[ds][x.id]),t=typ==='routine'?'routine':'event';
+    return '<div class="agenda-item '+(done?'done':'')+'">'
+      + '<button class="agenda-tick" onclick="memoRoutineToggle(\''+x.id+'\',\''+ds+'\');agendaDay(\''+ds+'\')" aria-label="Marcar como concluído">'+(done?'✓':'')+'</button>'
+      + '<span class="agenda-time">'+esc(x.time||'—')+'</span>'
+      + '<span class="agenda-name"><b>'+esc(x.title||'Sem título')+'</b><small>'+(typ==='routine'?'Rotina recorrente':'Compromisso / tarefa')+'</small></span>'
+      + '<div class="agenda-actions">'
+      + '<button class="btn s" onclick="agendaEdit(\''+t+'\',\''+x.id+'\')">Editar</button>'
+      + '<button class="btn s" onclick="agendaDel(\''+t+'\',\''+x.id+'\')">Excluir</button>'
+      + '</div></div>';
+  };
+  try{ if(typeof R==='function') R(); }catch(e){}
+})();
+</script><!-- [FIX-AGENDA-OK] --></body></html>
